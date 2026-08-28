@@ -88,6 +88,10 @@ var noiseLeaves = map[string]bool{
 	// "Featured" is a card header that rides right after "About" on creator
 	// layouts (headers stream before content) — it is NOT an about boundary.
 	"Featured": true,
+	// "LinkedIn helped me get this job" is a badge on experience cards;
+	// "Connected apps" is the LinkedIn Learning apps sub-header (both
+	// verified: arthi).
+	"LinkedIn helped me get this job": true, "Connected apps": true,
 }
 
 func isNoise(s string) bool { return noiseLeaves[s] }
@@ -165,10 +169,14 @@ func ParseExperience(leaves []string) []Experience {
 	// duration-only line ("Teqtive Solutions" + "1 yr", or
 	// "Theta Technolabs" + "Full-time · 11 yrs"). Grouped roles inherit the
 	// nearest header above; the header's type prefix is the employment type.
+	// A group may also carry a group-level location line after the duration
+	// (verified: arthi's Pfizer group) — grouped roles inherit it when they
+	// have no location of their own.
 	type groupHdr struct {
-		idx     int
-		company string
-		empType string
+		idx      int
+		company  string
+		empType  string
+		location string
 	}
 	var groups []groupHdr
 	for i := 0; i+1 < len(leaves); i++ {
@@ -177,7 +185,15 @@ func ParseExperience(leaves []string) []Experience {
 			if p := reDivider.Split(leaves[i+1], 2); len(p) == 2 && employmentTypes[strings.ToLower(strings.TrimSpace(p[0]))] {
 				emp = strings.TrimSpace(p[0])
 			}
-			groups = append(groups, groupHdr{i, leaves[i], emp})
+			// group location: the next line is a place ONLY when it isn't a
+			// work-mode word and isn't itself the role title (title would be
+			// directly followed by its dates line).
+			loc := ""
+			if i+3 < len(leaves) && looksLikeLocation(leaves[i+2]) && !looksLikeDates(leaves[i+2]) &&
+				!workModes[strings.ToLower(leaves[i+2])] && !looksLikeDates(leaves[i+3]) {
+				loc, _ = splitOrgLine(leaves[i+2])
+			}
+			groups = append(groups, groupHdr{i, leaves[i], emp, loc})
 		}
 	}
 	nearestGroup := func(di int) (groupHdr, bool) {
@@ -190,6 +206,18 @@ func ParseExperience(leaves []string) []Experience {
 		}
 		return best, found
 	}
+	// isGroupLoc matches a leaf to a DETECTED group's location line (exact
+	// string) — the precise trigger for the [group-location, title, dates]
+	// shape. (A generic looksLikeLocation test is far too greedy: it would
+	// hijack any short title like "Data Analyst" — verified the hard way.)
+	isGroupLoc := func(s string) bool {
+		for _, g := range groups {
+			if g.location != "" && g.location == s {
+				return true
+			}
+		}
+		return false
+	}
 
 	for k, di := range dateIdx {
 		if di < 2 {
@@ -198,16 +226,20 @@ func ParseExperience(leaves []string) []Experience {
 		title := leaves[di-2]
 		org := leaves[di-1]
 		company, empType := splitOrgLine(org)
+		groupLocation := ""
 		switch {
-		case (isNoise(title) || workModes[strings.ToLower(title)]) && !isNoise(org) && !looksLikeDates(org):
-			// Grouped role with NO org line: [work-mode?, title, dates] —
-			// title sits at di-1, noise ("Expanded" from the previous
-			// description) or a work-mode word sits at di-2.
+		case (isNoise(title) || workModes[strings.ToLower(title)] || isGroupLoc(title)) && !isNoise(org) && !looksLikeDates(org):
+			// Grouped role with NO org line: [work-mode?, title, dates] or
+			// [group-location, title, dates] — title sits at di-1 while
+			// noise ("Expanded" from the previous description), a work-mode
+			// word, or the group-level location sits at di-2 (verified:
+			// maitrey's Theta card, arthi's Pfizer card).
 			g, ok := nearestGroup(di)
 			if !ok || !looksLikeTitle(org) {
 				continue
 			}
 			title, company, empType = org, g.company, g.empType
+			groupLocation = g.location
 		default:
 			if isNoise(title) || isNoise(org) || looksLikeDates(title) {
 				continue
@@ -235,6 +267,9 @@ func ParseExperience(leaves []string) []Experience {
 				loc, _ := splitOrgLine(cand) // "Orlando, Florida · Hybrid" -> keep place part
 				exp.Location = loc
 			}
+		}
+		if exp.Location == "" {
+			exp.Location = groupLocation // grouped roles inherit the group-level location
 		}
 		out = append(out, exp)
 	}
@@ -283,7 +318,11 @@ func ParseEducation(leaves []string) []Education {
 	i++ // past the header (or past the end → loop exits)
 	for i < len(leaves) {
 		l := leaves[i]
-		if isNoise(l) || reAttachment.MatchString(l) {
+		// Grades, credential IDs and "Associated with X" association lines
+		// are education-card metadata, not entries (verified: arthi).
+		if isNoise(l) || reAttachment.MatchString(l) ||
+			strings.HasPrefix(l, "Grade: ") || strings.HasPrefix(l, "Credential ID ") ||
+			strings.HasPrefix(l, "Associated with ") {
 			i++
 			continue
 		}
@@ -306,6 +345,26 @@ func ParseEducation(leaves []string) []Education {
 		// school (verified: maitrey — cert title + 245-char description).
 		if i+1 < len(leaves) && isEduDescription(leaves[i+1]) {
 			i++ // skip the title; the description line breaks the walk below
+			continue
+		}
+		// Course cards ride inside education chunks: [title, dates,
+		// "Associated with X"] or [title, "Associated with X"] (verified:
+		// arthi) — skip the whole card.
+		if i+2 < len(leaves) && looksLikeDates(leaves[i+1]) && strings.HasPrefix(leaves[i+2], "Associated with ") {
+			i += 3
+			continue
+		}
+		if i+1 < len(leaves) && strings.HasPrefix(leaves[i+1], "Associated with ") {
+			i += 2
+			continue
+		}
+		// App/project cards: [name, category, >100-char description] — a
+		// candidate whose 2-lines-down is a LONG description paragraph is
+		// not a school (verified: arthi's "Connected apps" triples).
+		// NB: only the >100-char test — bullet lines ("- CGPA 9") ride under
+		// REAL schools too (verified: shradha's NSIT card).
+		if i+2 < len(leaves) && len(leaves[i+2]) > 100 {
+			i++
 			continue
 		}
 		e := Education{School: l}
@@ -520,7 +579,19 @@ func ParseRecommendations(leaves []string, ownerFirstName string) []Recommendati
 			out[i].Text = strings.Join(chunks[i], "\n\n")
 		}
 	}
-	return out
+	// A stream can render the same entries twice (received panel + full
+	// list — verified: arthi Part2): drop exact duplicates AFTER pairing.
+	seen := map[string]bool{}
+	dedup := out[:0]
+	for _, r := range out {
+		k := r.Recommender + "|" + r.Date + "|" + r.Relationship
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		dedup = append(dedup, r)
+	}
+	return dedup
 }
 
 // ParseTopSkillsLine splits "Agile Methodologies • Management • Communication".
