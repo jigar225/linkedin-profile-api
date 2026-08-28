@@ -112,8 +112,8 @@ func findCompanyURN(body []byte, slug string) (urn, name string) {
 	}
 	for _, raw := range vr.Included {
 		var e struct {
-			EntityURN    string `json:"entityUrn"`
-			Name         string `json:"name"`
+			EntityURN     string `json:"entityUrn"`
+			Name          string `json:"name"`
 			UniversalName string `json:"universalName"`
 		}
 		if json.Unmarshal(raw, &e) != nil {
@@ -138,15 +138,15 @@ func parseCompanyFull(body []byte, co *Company) {
 
 	// pass 1: index entities by URN (for reference resolution, e.g. industry)
 	type orgEntity struct {
-		Type          string   `json:"$type"`
-		EntityURN     string   `json:"entityUrn"`
-		UniversalName string   `json:"universalName"`
-		Name          string   `json:"name"`
-		Tagline       string   `json:"tagline"`
-		Description   string   `json:"description"`
-		Website       string   `json:"websiteUrl"`
-		FollowerCount int64    `json:"followerCount"`
-		EmployeeCount int64    `json:"employeeCount"`
+		Type          string `json:"$type"`
+		EntityURN     string `json:"entityUrn"`
+		UniversalName string `json:"universalName"`
+		Name          string `json:"name"`
+		Tagline       string `json:"tagline"`
+		Description   string `json:"description"`
+		Website       string `json:"websiteUrl"`
+		FollowerCount int64  `json:"followerCount"`
+		EmployeeCount int64  `json:"employeeCount"`
 		EmployeeRange *struct {
 			Start *int `json:"start"`
 			End   *int `json:"end"`

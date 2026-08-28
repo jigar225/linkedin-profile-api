@@ -31,6 +31,24 @@ type Certification struct {
 	IssuedDate string `json:"issued_date,omitempty"`
 }
 
+// Language pairs a language name with the proficiency leaf that directly
+// follows it (verified: maitrey Part4 — [name, proficiency] pairs).
+type Language struct {
+	Name        string `json:"name"`
+	Proficiency string `json:"proficiency,omitempty"`
+}
+
+// Recommendation is one received recommendation. Relationship is kept
+// verbatim ("managed Saumya directly") — the phrasing varies too much to
+// enum-ify.
+type Recommendation struct {
+	Recommender  string `json:"recommender,omitempty"`
+	Headline     string `json:"headline,omitempty"`
+	Relationship string `json:"relationship,omitempty"`
+	Date         string `json:"date,omitempty"`
+	Text         string `json:"text"`
+}
+
 // ---------- text-stream parsing (PR #298 philosophy: parse what a human reads) ----------
 
 var (
@@ -271,12 +289,26 @@ var knownLanguages = map[string]bool{
 	"Swedish": true, "Norwegian": true, "Danish": true, "Finnish": true, "Greek": true,
 }
 
-// ParseLanguages filters a section stream down to language names.
-func ParseLanguages(leaves []string) []string {
-	var out []string
+// knownProficiencies — LinkedIn's fixed proficiency scale; the proficiency
+// leaf directly follows its language name (verified: maitrey Part4).
+var knownProficiencies = map[string]bool{
+	"Elementary proficiency": true, "Limited working proficiency": true,
+	"Professional working proficiency": true, "Full professional proficiency": true,
+	"Native or bilingual proficiency": true,
+}
+
+// ParseLanguages filters a section stream down to [language, proficiency]
+// pairs. A proficiency attaches to the nearest language above it; languages
+// without a proficiency leaf keep an empty proficiency.
+func ParseLanguages(leaves []string) []Language {
+	var out []Language
 	for _, l := range leaves {
 		if knownLanguages[l] {
-			out = append(out, l)
+			out = append(out, Language{Name: l})
+			continue
+		}
+		if knownProficiencies[l] && len(out) > 0 && out[len(out)-1].Proficiency == "" {
+			out[len(out)-1].Proficiency = l
 		}
 	}
 	return out
@@ -298,6 +330,129 @@ func ParseSkills(leaves []string) []string {
 			continue
 		}
 		out = append(out, l)
+	}
+	return out
+}
+
+// reRelationship matches a recommendation's relationship line:
+// "June 17, 2025, Maitrey managed Saumya directly" — date + comma + text.
+// Distinctive enough that cert/education date lines never collide.
+var reRelationship = regexp.MustCompile(`^[A-Z][a-z]+ \d{1,2}, \d{4}, .+`)
+
+// relVerbs are LinkedIn's canonical relationship phrasings (owner-first
+// shape: "<Owner> managed X directly"). Used to extract the recommender
+// name when the preview-card lookup fails.
+var relVerbs = []string{
+	"worked with ", "managed ", "reported to ", "was senior to ",
+	"was junior to ", "was a client of ", "studied with ", "taught ",
+	"mentored ", "hired ",
+}
+
+// looksLikeRecommendations detects a recommendations chunk by its
+// date-prefixed relationship lines (verified: maitrey Part2).
+func looksLikeRecommendations(leaves []string) bool {
+	for _, l := range leaves {
+		if reRelationship.MatchString(l) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseRecommendations parses a recommendations-section stream. Stream
+// layout (verified): preview cards [name, headline]* first, then per-entry
+// headers ["· 3rd+" badge, headline, relationship-line], THEN the entry
+// texts as paragraph runs each closed by an "Expanded" leaf — headers and
+// texts pair up IN ORDER. Recommender name comes from matching the entry
+// headline back to the preview cards (exact LinkedIn data); the verb-split
+// of the relationship line is the fallback.
+func ParseRecommendations(leaves []string, ownerFirstName string) []Recommendation {
+	var relIdx []int
+	for i, l := range leaves {
+		if reRelationship.MatchString(l) {
+			relIdx = append(relIdx, i)
+		}
+	}
+	if len(relIdx) == 0 {
+		return nil
+	}
+	firstRel := relIdx[0]
+	previewName := func(headline string) string {
+		for p := 1; p < firstRel; p++ {
+			if leaves[p] == headline {
+				return leaves[p-1]
+			}
+		}
+		return ""
+	}
+
+	var out []Recommendation
+	for _, ri := range relIdx {
+		// headline sits 1-2 leaves above the relationship line (a "· 3rd+"
+		// degree badge may sit between)
+		headline := ""
+		for j := ri - 1; j >= 0 && j >= ri-2; j-- {
+			if strings.HasPrefix(leaves[j], "· ") {
+				continue
+			}
+			headline = leaves[j]
+			break
+		}
+		// split "<Month D, YYYY>, <relationship text>"
+		date, rest := leaves[ri], ""
+		if i := strings.Index(leaves[ri], ", "); i >= 0 {
+			if j := strings.Index(leaves[ri][i+2:], ", "); j >= 0 {
+				date = leaves[ri][:i+2+j]
+				rest = leaves[ri][i+2+j+2:]
+			}
+		}
+		rec := Recommendation{Headline: headline, Relationship: rest, Date: date}
+		// verb-split fallback: "<Owner> managed Saumya directly" -> "Saumya"
+		if ownerFirstName != "" && strings.HasPrefix(rest, ownerFirstName+" ") {
+			r := rest[len(ownerFirstName)+1:]
+			for _, v := range relVerbs {
+				if strings.HasPrefix(r, v) {
+					name := strings.TrimSpace(r[len(v):])
+					for _, q := range []string{" but ", " on the ", " directly", " indirectly"} {
+						if k := strings.Index(name, q); k >= 0 {
+							name = name[:k]
+						}
+					}
+					rec.Recommender = strings.TrimSpace(name)
+					break
+				}
+			}
+		}
+		if pn := previewName(headline); pn != "" && !isNoise(pn) {
+			rec.Recommender = pn // exact preview-card name beats the heuristic
+		}
+		out = append(out, rec)
+	}
+
+	// Texts stream AFTER the last relationship line, one paragraph run per
+	// entry, each run closed by an "Expanded" leaf — pair in order.
+	var chunks [][]string
+	var cur []string
+	for _, l := range leaves[relIdx[len(relIdx)-1]+1:] {
+		if l == "Expanded" || l == "Collapsed" {
+			if len(cur) > 0 {
+				chunks = append(chunks, cur)
+				cur = nil
+			}
+			continue
+		}
+		if isNoise(l) {
+			continue
+		}
+		cur = append(cur, l)
+	}
+	if len(cur) > 0 {
+		chunks = append(chunks, cur)
+	}
+	for i := range out {
+		if i < len(chunks) {
+			out[i].Text = strings.Join(chunks[i], "\n\n")
+		}
 	}
 	return out
 }
@@ -342,11 +497,12 @@ func ParseAboveActivity(leaves []string) (about string, topSkills []string) {
 // ClassifyBelowActivityPart routes a BelowActivity PartN stream by CONTENT
 // (part numbering varies per profile — never trust the number):
 //
-//	certifications: only when "Issued <date>" lines exist ("Issued by X" = honors)
-//	education:      only when an "Education" header leaf is present
-//	languages:      dictionary filter (works headerless — e.g. a lone "French")
-//	skills:         small parts of short skill-ish lines
-func ClassifyBelowActivityPart(leaves []string, prof *Profile, addSkills func([]string)) {
+//	recommendations: date-prefixed relationship lines ("June 17, 2025, ...")
+//	certifications:  only when "Issued <date>" lines exist ("Issued by X" = honors)
+//	education:       only when an "Education" header leaf is present
+//	languages:       dictionary filter (works headerless — e.g. a lone "French")
+//	skills:          small parts of short skill-ish lines
+func ClassifyBelowActivityPart(leaves []string, prof *Profile, addSkills func([]string), addLangs func([]Language), ownerFirstName string) {
 	hasIssuedLine := false
 	for _, l := range leaves {
 		if strings.HasPrefix(l, "Issued ") && !strings.HasPrefix(l, "Issued by") {
@@ -355,6 +511,8 @@ func ClassifyBelowActivityPart(leaves []string, prof *Profile, addSkills func([]
 		}
 	}
 	switch {
+	case looksLikeRecommendations(leaves):
+		prof.Recommendations = append(prof.Recommendations, ParseRecommendations(leaves, ownerFirstName)...)
 	case hasIssuedLine || containsLeaf(leaves, "Education"):
 		if hasIssuedLine {
 			prof.Certifications = append(prof.Certifications, ParseCertifications(leaves)...)
@@ -367,7 +525,7 @@ func ClassifyBelowActivityPart(leaves []string, prof *Profile, addSkills func([]
 	}
 	// headerless languages can hide in any part
 	if langs := ParseLanguages(leaves); len(langs) > 0 {
-		prof.Languages = append(prof.Languages, langs...)
+		addLangs(langs)
 	}
 }
 

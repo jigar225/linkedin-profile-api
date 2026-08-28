@@ -77,13 +77,39 @@ Profile response, `200 OK`:
       "issued_date": "Nov 2025"
     }
   ],
-  "languages": [],
+  "languages": [
+    {"name": "English", "proficiency": "Professional working proficiency"}
+  ],
+  "recommendations": [
+    {
+      "recommender": "Sunny Vaghadia",
+      "headline": "Expert Engineer at Apexon | JavaScript | React JS | ...",
+      "relationship": "Maitrey worked with Sunny but on different teams",
+      "date": "June 17, 2025",
+      "text": "I had the pleasure of working with him for a couple of years..."
+    }
+  ],
+  "contact_info": {
+    "websites": ["apnacollege.in"]
+  },
   "profile_images": [
     "https://media.licdn.com/dms/image/v2/D4D03AQFP5AfItO2rGw/profile-displayphoto-shrink_400_400/..."
   ],
   "linkedin_url": "https://www.linkedin.com/in/islaniaaayush/"
 }
 ```
+
+Field notes:
+
+- `languages`: `proficiency` is omitted when the profile doesn't state one.
+- `recommendations`: received and given recommendations are mixed in one
+  array. LinkedIn's data stream has no reliable per-entry marker for the
+  direction, so we don't guess — the `relationship` line always names both
+  parties ("Maitrey managed Saumya directly" vs "Shradha was senior to
+  Varun ...").
+- `contact_info`: omitted entirely when the member shares nothing with your
+  account. Email/phone are usually only visible for 1st-degree connections;
+  websites/socials sometimes show for anyone.
 
 Same endpoint for companies and schools
 (`/v1/profile?url=https://www.linkedin.com/company/nvidia/`):
@@ -113,6 +139,7 @@ Errors, always `{"error": "..."}`:
 400  missing "url" query parameter
 400  unsupported LinkedIn URL type (response includes the supported list:
      /in/, /company/, /school/)
+429  too many upstream fetches in flight (Retry-After header set)
 502  upstream LinkedIn failure (session expired, rate limited, not found)
 ```
 

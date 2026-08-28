@@ -8,7 +8,9 @@ import (
 )
 
 // React Flight payloads are line-delimited rows like:
-//   15:["$","$L23",null,{"children":["Issued Sep 2024"], ...}]
+//
+//	15:["$","$L23",null,{"children":["Issued Sep 2024"], ...}]
+//
 // Human text hides in two spots: "children":["<text>"] leaves and
 // proto.sdui {"stringValue":"<text>"} values. We harvest both, in reading order.
 var (

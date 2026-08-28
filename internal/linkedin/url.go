@@ -9,10 +9,10 @@ import (
 type URLType int
 
 const (
-	URLTypeProfile URLType = iota // /in/<slug>/
-	URLTypeCompany                // /company/<slug>/
-	URLTypeSchool                 // /school/<slug>/
-	URLTypeUnsupported            // everything else
+	URLTypeProfile     URLType = iota // /in/<slug>/
+	URLTypeCompany                    // /company/<slug>/
+	URLTypeSchool                     // /school/<slug>/
+	URLTypeUnsupported                // everything else
 )
 
 func (t URLType) String() string {

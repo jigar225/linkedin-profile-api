@@ -11,7 +11,7 @@ import (
 // RSC component IDs — they name the profile section bundles the SPA asks for.
 // Captured from real traffic. (Above = About/top area, Below = everything under Activity.)
 const (
-	RSCAboveActivity = "com.linkedin.sdui.generated.profile.dsl.impl.profileCardsAboveActivity"
+	RSCAboveActivity  = "com.linkedin.sdui.generated.profile.dsl.impl.profileCardsAboveActivity"
 	RSCExperienceOnly = "com.linkedin.sdui.generated.profile.dsl.impl.profileCardsExperienceOnly"
 	// RSCBelowActivityBase is the prefix for the lazy-loaded section chunks:
 	// Part1WithoutExp, Part2, Part3 … (numbering varies per profile).
@@ -19,6 +19,12 @@ const (
 )
 
 const rscComponentURL = "https://www.linkedin.com/flagship-web/rsc-action/actions/component?componentId="
+
+// liAppVersion / liTrack mirror LinkedIn's current web build (recon round 4,
+// Aug 2026: 0.2.6975). LinkedIn tolerates stale versions, but keep them
+// current — they live in ONE place so a re-capture means a one-line change.
+const liAppVersion = "0.2.6975"
+const liTrack = `{"clientVersion":"` + liAppVersion + `","mpVersion":"` + liAppVersion + `","osName":"web","timezoneOffset":5.5,"timezone":"Asia/Calcutta","deviceFormFactor":"DESKTOP","mpName":"web","displayDensity":1,"displayWidth":1280,"displayHeight":720}`
 
 // rscBodyTemplate is the EXACT request body LinkedIn's SPA sends for profile
 // sections (captured in recon round 3), with two placeholders.
@@ -42,11 +48,11 @@ func (c *Client) GetProfileSection(vanity, vieweeID, componentID string) (string
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("referer", "https://www.linkedin.com/in/"+vanity+"/")
 	req.Header.Set("x-li-rsc-stream", "true")
-	req.Header.Set("x-li-application-version", "0.2.6951")
+	req.Header.Set("x-li-application-version", liAppVersion)
 	req.Header.Set("x-li-anchor-page-key", "d_flagship3_profile_view_base")
 	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_profile_view_base;fF3VyyBJQT25ia7GrNb2kA==")
 	req.Header.Set("x-li-page-instance-tracking-id", "fF3VyyBJQT25ia7GrNb2kA==")
-	req.Header.Set("x-li-track", `{"clientVersion":"0.2.6951","mpVersion":"0.2.6951","osName":"web","timezoneOffset":5.5,"timezone":"Asia/Calcutta","deviceFormFactor":"DESKTOP","mpName":"web","displayDensity":1,"displayWidth":1280,"displayHeight":720}`)
+	req.Header.Set("x-li-track", liTrack)
 
 	resp, err := c.doWithRetry(req)
 	if err != nil {

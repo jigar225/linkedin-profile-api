@@ -59,21 +59,37 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 			results <- sectionResult{componentID: componentID, flight: flight, leaves: ExtractFlightTexts(flight)}
 		}(comp)
 	}
+	// Contact info rides the overlay navigation action alongside the section
+	// fan-out. Optional data: failure must never sink the profile.
+	contactCh := make(chan *ContactInfo, 1)
+	go func() {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+		flight, err := c.GetContactInfo(vanity, tc.FirstName, tc.LastName)
+		if err != nil {
+			log.Printf("linkedin: contact info for %s: %v", vanity, err)
+			contactCh <- nil
+			return
+		}
+		contactCh <- ParseContactInfo(ExtractFlightTexts(flight))
+	}()
 	wg.Wait()
 	close(results)
 
 	prof := &Profile{
-		Name:           strings.TrimSpace(tc.FirstName + " " + tc.LastName),
-		Headline:       tc.Headline,
-		Location:       tc.Location,
-		ProfileImages:  tc.PhotoURLs,
-		LinkedInURL:    sourceURL,
-		Experience:     []Experience{},
-		Education:      []Education{},
-		Skills:         []string{},
-		Certifications: []Certification{},
-		Languages:      []string{},
+		Name:            strings.TrimSpace(tc.FirstName + " " + tc.LastName),
+		Headline:        tc.Headline,
+		Location:        tc.Location,
+		ProfileImages:   tc.PhotoURLs,
+		LinkedInURL:     sourceURL,
+		Experience:      []Experience{},
+		Education:       []Education{},
+		Skills:          []string{},
+		Certifications:  []Certification{},
+		Languages:       []Language{},
+		Recommendations: []Recommendation{},
 	}
+	prof.ContactInfo = <-contactCh
 
 	skillsSeen := map[string]bool{}
 	addSkills := func(ss []string) {
@@ -81,6 +97,15 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 			if !skillsSeen[s] {
 				skillsSeen[s] = true
 				prof.Skills = append(prof.Skills, s)
+			}
+		}
+	}
+	langsSeen := map[string]bool{}
+	addLangs := func(ls []Language) {
+		for _, l := range ls {
+			if !langsSeen[l.Name] {
+				langsSeen[l.Name] = true
+				prof.Languages = append(prof.Languages, l)
 			}
 		}
 	}
@@ -101,7 +126,7 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 		case RSCExperienceOnly:
 			prof.Experience = ParseExperience(r.leaves)
 		default:
-			ClassifyBelowActivityPart(r.leaves, prof, addSkills)
+			ClassifyBelowActivityPart(r.leaves, prof, addSkills, addLangs, tc.FirstName)
 		}
 	}
 	// Optional debug dumps for parser work: raw Flight payloads + extracted

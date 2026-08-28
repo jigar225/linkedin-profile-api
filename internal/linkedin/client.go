@@ -22,9 +22,9 @@ const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
 
 // Client talks to LinkedIn's internal endpoints using session cookies.
 type Client struct {
-	http       *http.Client
-	cookieHdr  string // prebuilt "k1=v1; k2=v2" header
-	csrfToken  string // JSESSIONID value, quotes stripped — LinkedIn's csrf-token header
+	http      *http.Client
+	cookieHdr string // prebuilt "k1=v1; k2=v2" header
+	csrfToken string // JSESSIONID value, quotes stripped — LinkedIn's csrf-token header
 }
 
 // NewClient builds a Client from the two cookies that actually matter:
