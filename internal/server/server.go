@@ -58,13 +58,13 @@ func (s *Server) ListenAndServe(addr string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("🚀 linkedin-profile-api listening on %s", addr)
+		log.Printf("linkedin-profile-api listening on %s", addr)
 		errCh <- srv.ListenAndServe()
 	}()
 
 	select {
 	case <-ctx.Done():
-		log.Println("⏳ shutting down…")
+		log.Println("shutting down...")
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutCtx)

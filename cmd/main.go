@@ -25,9 +25,6 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	// Load .env for local dev if present. Missing file is fine (prod injects
-	// real env vars); existing env vars always win. Must run before anything
-	// reads the environment — flag defaults included.
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintln(os.Stderr, "warning: .env:", err)
 	}
@@ -38,15 +35,12 @@ func main() {
 		"path to session cookies JSON (env: LINKEDIN_SESSION_FILE; default assumes repo root, file kept one level up = outside the repo)")
 	flag.Parse()
 
-	// Auth resolution: env cookies (prod / repo users) win over the session
-	// file (our dev flow). Built once — server handlers reuse the client
-	// (connection pooling) across requests.
 	var client *linkedin.Client
 	liAt, jsessionID := os.Getenv("LI_AT"), os.Getenv("JSESSIONID")
 	switch {
 	case liAt != "" && jsessionID != "":
 		client = linkedin.NewClient(liAt, jsessionID)
-		fmt.Fprintln(os.Stderr, "🔑 auth: LI_AT + JSESSIONID env cookies")
+		fmt.Fprintln(os.Stderr, "auth: LI_AT + JSESSIONID env cookies")
 	case liAt != "" || jsessionID != "":
 		fmt.Fprintln(os.Stderr, "error: set BOTH LI_AT and JSESSIONID, or neither (falls back to session file)")
 		os.Exit(1)
@@ -57,7 +51,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "🔑 auth: session file", *session)
+		fmt.Fprintln(os.Stderr, "auth: session file", *session)
 	}
 
 	if *url != "" {

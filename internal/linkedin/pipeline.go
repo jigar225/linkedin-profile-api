@@ -2,6 +2,7 @@ package linkedin
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 )
@@ -90,10 +91,32 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 			ClassifyBelowActivityPart(r.leaves, prof, addSkills)
 		}
 	}
-	// NOTE: individual section failures are tolerated (partial data > no data).
-	// fetchErrs lists failed components — callers may log it.
-	_ = fetchErrs
+	// Individual section failures are tolerated (partial data > no data),
+	// but they must be VISIBLE — silent parser drift is the real enemy.
+	if len(fetchErrs) > 0 {
+		log.Printf("linkedin: %d/%d section fetches failed for %s: %v",
+			len(fetchErrs), len(components), vanity, fetchErrs)
+	}
+
+	if err := validateProfile(prof); err != nil {
+		return nil, err
+	}
 	return prof, nil
+}
+
+// validateProfile guards against silent parser drift. A real profile always
+// has a name, and an empty everything (about + all sections) means the page
+// structure changed under us — fail loudly instead of returning clean-looking
+// junk JSON.
+func validateProfile(p *Profile) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("validation: empty profile name (parser drift or auth wall)")
+	}
+	if p.About == "" && len(p.Experience) == 0 && len(p.Education) == 0 &&
+		len(p.Skills) == 0 && len(p.Certifications) == 0 && len(p.Languages) == 0 {
+		return fmt.Errorf("validation: all sections empty for %s (parser drift or auth wall)", p.Name)
+	}
+	return nil
 }
 
 func shortComponentID(componentID string) string {
