@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -25,6 +26,10 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
+	// Log platforms (Railway et al.) classify anything on stderr as
+	// error-level; our routine logs are info — send them to stdout.
+	log.SetOutput(os.Stdout)
+
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintln(os.Stderr, "warning: .env:", err)
 	}
@@ -40,7 +45,7 @@ func main() {
 	switch {
 	case liAt != "" && jsessionID != "":
 		client = linkedin.NewClient(liAt, jsessionID)
-		fmt.Fprintln(os.Stderr, "auth: LI_AT + JSESSIONID env cookies")
+		fmt.Println("auth: LI_AT + JSESSIONID env cookies")
 	case liAt != "" || jsessionID != "":
 		fmt.Fprintln(os.Stderr, "error: set BOTH LI_AT and JSESSIONID, or neither (falls back to session file)")
 		os.Exit(1)
@@ -51,7 +56,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "auth: session file", *session)
+		fmt.Println("auth: session file", *session)
 	}
 
 	if *url != "" {
