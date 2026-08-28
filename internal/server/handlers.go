@@ -1,11 +1,16 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"linkedin-profile-api/internal/linkedin"
 )
+
+// errBusy signals the global fetch cap is full (the handler maps it to 429).
+var errBusy = errors.New("server busy — too many fetches in flight")
 
 // supportedTypes is returned in 400s so API consumers discover what works.
 var supportedTypes = []string{"/in/", "/company/", "/school/"}
@@ -32,17 +37,55 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var result any
-	switch typ {
-	case linkedin.URLTypeProfile:
-		result, err = s.client.FetchProfile(slug, "https://www.linkedin.com/in/"+slug+"/")
-	case linkedin.URLTypeCompany, linkedin.URLTypeSchool:
-		result, err = s.client.GetCompany(slug, typ.String())
-	default: // ClassifyURL already rejects unsupported types; belt-and-braces
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error":     "unsupported LinkedIn URL type",
-			"supported": supportedTypes,
-		})
+	// Cache first: repeat requests for the same URL never touch LinkedIn.
+	key := typ.String() + "/" + slug
+	if data, ok := s.cache.get(key); ok {
+		w.Header().Set("X-Cache", "hit")
+		writeJSONBytes(w, http.StatusOK, data)
+		return
+	}
+
+	// Singleflight: concurrent requests for the same URL share ONE upstream
+	// fetch — the owner works, waiters block and get the same bytes.
+	data, err := s.flights.do(key, func() ([]byte, error) {
+		// a waiter may have queued while the owner fetched → cache is hot now
+		if data, ok := s.cache.get(key); ok {
+			return data, nil
+		}
+
+		// Global fetch cap: too many live fetches → fail fast, don't queue.
+		select {
+		case s.fetchSem <- struct{}{}:
+			defer func() { <-s.fetchSem }()
+		default:
+			return nil, errBusy
+		}
+
+		var result any
+		var fetchErr error
+		switch typ {
+		case linkedin.URLTypeProfile:
+			result, fetchErr = s.client.FetchProfile(slug, "https://www.linkedin.com/in/"+slug+"/")
+		case linkedin.URLTypeCompany, linkedin.URLTypeSchool:
+			result, fetchErr = s.client.GetCompany(slug, typ.String())
+		}
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(result); err != nil {
+			return nil, err
+		}
+		data := buf.Bytes()
+		s.cache.set(key, data)
+		return data, nil
+	})
+	if errors.Is(err, errBusy) {
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusTooManyRequests, "server busy — too many fetches in flight, retry shortly")
 		return
 	}
 	if err != nil {
@@ -50,7 +93,7 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "linkedin fetch failed: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSONBytes(w, http.StatusOK, data)
 }
 
 // handleHealth is a liveness probe for deploys and uptime checks.
@@ -66,6 +109,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(v) // nothing sensible to do once the response has started
+}
+
+// writeJSONBytes writes pre-marshaled JSON (the cache stores response bytes).
+func writeJSONBytes(w http.ResponseWriter, status int, data []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(data)
 }
 
 // writeError is the uniform error shape: {"error": "..."}.

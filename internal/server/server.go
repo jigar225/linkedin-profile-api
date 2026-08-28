@@ -23,11 +23,23 @@ import (
 // concurrent use) and its http.Client keeps LinkedIn connections warm.
 type Server struct {
 	client *linkedin.Client
+	cache  *cache
+	// fetchSem bounds how many LinkedIn fetches run at once. It's the
+	// account-protection layer: our one LinkedIn session is the scarce
+	// resource, not CPU/goroutines.
+	fetchSem chan struct{}
+	// flights coalesces concurrent same-URL requests into one upstream fetch.
+	flights *flightGroup
 }
 
 // New returns a Server backed by the given LinkedIn client.
 func New(client *linkedin.Client) *Server {
-	return &Server{client: client}
+	return &Server{
+		client:   client,
+		cache:    newCache(),
+		fetchSem: make(chan struct{}, 4),
+		flights:  &flightGroup{},
+	}
 }
 
 // Handler builds the routing table (Go 1.22+ method patterns) wrapped in
