@@ -89,7 +89,7 @@ func (c *Client) getVoyager(url string) ([]byte, error) {
 	req.Header.Set("x-restli-protocol-version", "2.0.0")
 	req.Header.Set("accept", "application/vnd.linkedin.normalized+json+2.1")
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return nil, err
 	}

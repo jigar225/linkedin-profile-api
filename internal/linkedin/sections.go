@@ -36,11 +36,14 @@ type Certification struct {
 var (
 	reYear    = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	reIssued  = regexp.MustCompile(`^Issued\s+`)
-	// word boundaries matter: "Associated with X" must NOT match "associate".
-	reDegree  = regexp.MustCompile(`(?i)\b(bachelor|master|doctor|phd|mba|b\.?tech|m\.?tech|degree|diploma|certificate|associate)\b`)
 	reDivider = regexp.MustCompile(`\s[·•]\s`)
 	// duration-only lines ("1 yr", "2 yrs 3 mos") mark grouped-company headers.
 	reDurationOnly = regexp.MustCompile(`^\d+\s+(yrs?|mos?)\b`)
+	// endorsement counts ("21 endorsements") are skills metadata, not skills.
+	reEndorsements = regexp.MustCompile(`^\d[\d,]* endorsements?$`)
+	// media/document attachment leaves ("Intro_To_CyberSecurity.pdf") ride
+	// inside cert/education cards — not entry data (verified: Aayush).
+	reAttachment = regexp.MustCompile(`(?i)\.(pdf|png|jpe?g|gif|docx?|pptx?|xlsx?|mp4|zip)$`)
 )
 
 // employmentTypes — when the org line holds ONLY one of these, the role is
@@ -57,12 +60,31 @@ var noiseLeaves = map[string]bool{
 	"Join": true, "Joined": true, "Requested": true, "Unsubscribed": true,
 	"Subscribed": true, "Received": true, "Given": true, "Link": true,
 	"Show more": true, "See more": true, "Show all": true,
+	// "Featured" is a card header that rides right after "About" on creator
+	// layouts (headers stream before content) — it is NOT an about boundary.
+	"Featured": true,
 }
 
 func isNoise(s string) bool { return noiseLeaves[s] }
 
 func looksLikeDates(s string) bool {
 	return reYear.MatchString(s) || strings.Contains(s, "Present")
+}
+
+// looksLikeLocation guards the experience-location heuristic: real geo lines
+// are short ("India", "Hyderabad, Telangana, India"); company taglines and
+// descriptions are long, sentence-y, or emoji-laden (verified: Shradha's
+// Apna College tagline leaking in as a "location").
+func looksLikeLocation(s string) bool {
+	if len(s) > 40 || strings.Contains(s, ". ") {
+		return false
+	}
+	for _, r := range s {
+		if r > 0x2FFF { // emoji & friends (en_US locale = geo lines stay ASCII-ish)
+			return false
+		}
+	}
+	return true
 }
 
 // splitOrgLine splits "Company · Full-time" -> company, employment type.
@@ -137,7 +159,7 @@ func ParseExperience(leaves []string) []Experience {
 			if k+1 < len(dateIdx) {
 				nextStart = dateIdx[k+1] - 2
 			}
-			if di+1 < nextStart && !isNoise(cand) && !looksLikeDates(cand) {
+			if di+1 < nextStart && !isNoise(cand) && !looksLikeDates(cand) && looksLikeLocation(cand) {
 				loc, _ := splitOrgLine(cand) // "Orlando, Florida · Hybrid" -> keep place part
 				exp.Location = loc
 			}
@@ -175,24 +197,66 @@ func issuerFromLine(s string) string {
 	return s
 }
 
-// ParseEducation parses [school, degree, dates] triples (degree line filtered by keywords).
+// ParseEducation walks an Education-section stream. An entry is: school name,
+// optional detail line (degree/field/program), optional dates line. All three
+// shapes exist in the wild (verified): dated+degreed (Aayush), dates-only
+// (Bill Gates' Harvard dropout entry), no-dates field-of-study (Shradha).
+// Collection stops at description bullets / score lines / next-section headers.
 func ParseEducation(leaves []string) []Education {
 	var out []Education
-	for i := 0; i+2 < len(leaves); i++ {
-		school, degree, dates := leaves[i], leaves[i+1], leaves[i+2]
-		if isNoise(school) || !reDegree.MatchString(degree) || !looksLikeDates(dates) {
+	i := 0
+	for i < len(leaves) && leaves[i] != "Education" {
+		i++
+	}
+	i++ // past the header (or past the end → loop exits)
+	for i < len(leaves) {
+		l := leaves[i]
+		if isNoise(l) || reAttachment.MatchString(l) {
+			i++
 			continue
 		}
-		// guards against recommendation-card lines leaking in
-		if strings.HasPrefix(school, "·") || strings.Contains(school+degree+dates, "worked with") ||
-			strings.Contains(school+degree+dates, "reported to") || strings.Contains(school+degree+dates, "managed ") {
+		if isEduDescription(l) || eduSectionHeaders[l] {
+			break // rest is free-text description, scores, or another section
+		}
+		if looksLikeDates(l) {
+			i++ // orphan date line — skip
 			continue
 		}
-		dr, from, to := splitDates(dates)
-		out = append(out, Education{School: school, Degree: degree, DateRange: dr, From: from, To: to})
-		i += 2
+		// Cert/honor triples [title, issuer, "Issued <date>"] can precede the
+		// education entries in mixed chunks (verified: Aayush Part1, no
+		// "Certifications" header) — skip the whole triple.
+		if i+2 < len(leaves) && strings.HasPrefix(leaves[i+2], "Issued ") {
+			i += 3
+			continue
+		}
+		e := Education{School: l}
+		if i+1 < len(leaves) && !isNoise(leaves[i+1]) && !reAttachment.MatchString(leaves[i+1]) &&
+			!looksLikeDates(leaves[i+1]) && !isEduDescription(leaves[i+1]) && !eduSectionHeaders[leaves[i+1]] {
+			e.Degree = leaves[i+1]
+			i++
+		}
+		if i+1 < len(leaves) && looksLikeDates(leaves[i+1]) {
+			e.DateRange, e.From, e.To = splitDates(leaves[i+1])
+			i++
+		}
+		out = append(out, e)
+		i++
 	}
 	return out
+}
+
+// isEduDescription marks the free-text tail of an education card:
+// bullet lines and long sentences are descriptions, not entries.
+func isEduDescription(s string) bool {
+	return strings.HasPrefix(s, "- ") || len(s) > 100
+}
+
+// eduSectionHeaders terminate education parsing when chunks mix sections.
+var eduSectionHeaders = map[string]bool{
+	"Certifications": true, "Licenses & certifications": true,
+	"Honors & awards": true, "Skills": true, "Languages": true,
+	"Recommendations": true, "Interests": true, "Courses": true,
+	"Projects": true, "Publications": true, "Patents": true,
 }
 
 // knownLanguages — quick dictionary filter for the Languages section
@@ -218,11 +282,19 @@ func ParseLanguages(leaves []string) []string {
 	return out
 }
 
+// skillJunk marks endorsement/assessment metadata lines — they ride along
+// with skill names in skills sections (verified: Shradha) but aren't skills.
+func skillJunk(s string) bool {
+	return strings.HasPrefix(s, "Endorsed by ") ||
+		reEndorsements.MatchString(s) ||
+		s == "Passed LinkedIn Skill Assessment"
+}
+
 // ParseSkills returns plausible skill names from a skills-section stream.
 func ParseSkills(leaves []string) []string {
 	var out []string
 	for _, l := range leaves {
-		if isNoise(l) || strings.HasPrefix(l, "interest_") || strings.Contains(l, "EditButton") {
+		if isNoise(l) || skillJunk(l) || strings.HasPrefix(l, "interest_") || strings.Contains(l, "EditButton") {
 			continue
 		}
 		out = append(out, l)
@@ -242,7 +314,10 @@ func ParseTopSkillsLine(s string) []string {
 }
 
 // ParseAboveActivity extracts the About text (paragraphs between the "About"
-// header and the next card boundary) and the "Top skills" line.
+// header and the next REAL card boundary) and the "Top skills" line.
+// Layout quirk (verified on creator profiles): card headers can stream BEFORE
+// content — "About","Featured",then paragraphs — so "Featured" is noise, and
+// collection stops only at "Top skills"/"Services"/"Post".
 func ParseAboveActivity(leaves []string) (about string, topSkills []string) {
 	var aboutParts []string
 	inAbout := false
@@ -251,7 +326,7 @@ func ParseAboveActivity(leaves []string) (about string, topSkills []string) {
 		case "About":
 			inAbout = true
 			continue
-		case "Top skills", "Services", "Featured":
+		case "Top skills", "Services", "Post":
 			inAbout = false
 			if l == "Top skills" && i+1 < len(leaves) {
 				topSkills = ParseTopSkillsLine(leaves[i+1])
@@ -306,12 +381,19 @@ func containsLeaf(leaves []string, word string) bool {
 }
 
 // looksLikeSkillsPart: small parts dominated by short skill-ish lines
-// (e.g. "Communication", "Way of Working (WoW)", "DASM").
+// (e.g. "Communication", "Way of Working (WoW)", "DASM"). Endorsement junk
+// is stripped BEFORE the size cap so big real skill lists survive.
 func looksLikeSkillsPart(leaves []string) bool {
-	if len(leaves) == 0 || len(leaves) > 12 {
+	var real []string
+	for _, l := range leaves {
+		if !isNoise(l) && !skillJunk(l) && !strings.HasPrefix(l, "interest_") && !strings.Contains(l, "EditButton") {
+			real = append(real, l)
+		}
+	}
+	if len(real) == 0 || len(real) > 12 {
 		return false
 	}
-	for _, l := range leaves {
+	for _, l := range real {
 		if strings.Contains(l, " · ") || strings.Contains(l, "Present") || len(l) > 60 {
 			return false
 		}

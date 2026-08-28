@@ -3,9 +3,19 @@ package linkedin
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
+
+// sectionResult is one component's fetch outcome from the parallel fan-out.
+type sectionResult struct {
+	componentID string
+	flight      string
+	leaves      []string
+	err         error
+}
 
 // FetchProfile runs the full engine for one profile:
 //
@@ -29,23 +39,24 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 		components = append(components, c)
 	}
 
-	type sectionResult struct {
-		componentID string
-		leaves      []string
-		err         error
-	}
 	results := make(chan sectionResult, len(components))
 	var wg sync.WaitGroup
+	// Bounded parallelism: LinkedIn's SPA lazy-loads sections in small batches.
+	// Firing all ~10 at once storms fresh TLS handshakes (observed as
+	// intermittent "tls: bad record MAC" bursts); 3 mimics the SPA's rhythm.
+	sem := make(chan struct{}, 3)
 	for _, comp := range components {
 		wg.Add(1)
 		go func(componentID string) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			flight, err := c.GetProfileSection(vanity, tc.VieweeID, componentID)
 			if err != nil {
 				results <- sectionResult{componentID: componentID, err: err}
 				return
 			}
-			results <- sectionResult{componentID: componentID, leaves: ExtractFlightTexts(flight)}
+			results <- sectionResult{componentID: componentID, flight: flight, leaves: ExtractFlightTexts(flight)}
 		}(comp)
 	}
 	wg.Wait()
@@ -75,9 +86,11 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 	}
 
 	var fetchErrs []string
+	var all []sectionResult
 	for r := range results {
+		all = append(all, r)
 		if r.err != nil {
-			fetchErrs = append(fetchErrs, shortComponentID(r.componentID))
+			fetchErrs = append(fetchErrs, fmt.Sprintf("%s: %.120s", shortComponentID(r.componentID), r.err))
 			continue
 		}
 		switch r.componentID {
@@ -91,6 +104,12 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 			ClassifyBelowActivityPart(r.leaves, prof, addSkills)
 		}
 	}
+	// Optional debug dumps for parser work: raw Flight payloads + extracted
+	// text leaves per component. Opt-in via LINKEDIN_DEBUG_DIR.
+	if dir := os.Getenv("LINKEDIN_DEBUG_DIR"); dir != "" {
+		dumpProfileStreams(dir, vanity, all)
+	}
+
 	// Individual section failures are tolerated (partial data > no data),
 	// but they must be VISIBLE — silent parser drift is the real enemy.
 	if len(fetchErrs) > 0 {
@@ -102,6 +121,25 @@ func (c *Client) FetchProfile(vanity, sourceURL string) (*Profile, error) {
 		return nil, err
 	}
 	return prof, nil
+}
+
+// dumpProfileStreams writes each component's raw Flight payload and its
+// extracted text leaves to <dir>/<vanity>/<component>.{flight,leaves}.txt.
+// Debug-only; failures here must not break a fetch.
+func dumpProfileStreams(dir, vanity string, results []sectionResult) {
+	base := filepath.Join(dir, vanity)
+	if err := os.MkdirAll(base, 0755); err != nil {
+		log.Printf("linkedin: debug dump mkdir: %v", err)
+		return
+	}
+	for _, r := range results {
+		if r.err != nil {
+			continue
+		}
+		name := shortComponentID(r.componentID)
+		os.WriteFile(filepath.Join(base, name+".flight.txt"), []byte(r.flight), 0644)
+		os.WriteFile(filepath.Join(base, name+".leaves.txt"), []byte(strings.Join(r.leaves, "\n")), 0644)
+	}
 }
 
 // validateProfile guards against silent parser drift. A real profile always

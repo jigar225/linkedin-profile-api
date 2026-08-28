@@ -46,10 +46,10 @@ func (s *Server) ListenAndServe(addr string) error {
 		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
-		// A profile fetch fans out to ~11 upstream LinkedIn calls; each is
-		// capped at 30s inside the engine (topcard + parallel sections run
-		// sequentially), so worst case ≈ 60s. WriteTimeout must exceed that.
-		WriteTimeout: 75 * time.Second,
+		// A profile fetch fans out to ~11 upstream calls, max 3 concurrent,
+		// each retried up to 3× on transport failure — worst case ≈ 2 minutes.
+		// WriteTimeout must exceed that.
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

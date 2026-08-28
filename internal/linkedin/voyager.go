@@ -57,7 +57,7 @@ func (c *Client) GetTopcard(vanity string) (*Topcard, error) {
 	req.Header.Set("x-restli-protocol-version", "2.0.0")
 	req.Header.Set("accept", "application/vnd.linkedin.normalized+json+2.1")
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return nil, fmt.Errorf("voyager request: %w", err)
 	}

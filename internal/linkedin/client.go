@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -31,7 +33,7 @@ type Client struct {
 func NewClient(liAt, jsessionID string) *Client {
 	csrf := strings.Trim(strings.TrimSpace(jsessionID), `"`)
 	return &Client{
-		http: &http.Client{Timeout: 30 * time.Second},
+		http: newHTTPClient(),
 		// LinkedIn sets JSESSIONID as a quoted cookie value ("ajax:...") —
 		// reproduce that in the Cookie header; the csrf-token header wants it raw.
 		cookieHdr: `li_at=` + strings.TrimSpace(liAt) + `; JSESSIONID="` + csrf + `"`,
@@ -71,10 +73,57 @@ func NewClientFromSessionFile(path string) (*Client, error) {
 	}
 
 	return &Client{
-		http:      &http.Client{Timeout: 30 * time.Second},
+		http:      newHTTPClient(),
 		cookieHdr: strings.Join(parts, "; "),
 		csrfToken: csrf,
 	}, nil
+}
+
+// newHTTPClient builds the shared HTTP client, tuned for our burst pattern:
+// a profile fetch fires ~11 requests at one host — the pool must cover the
+// burst or every request opens a fresh TLS handshake (default transport pools
+// only 2/host; handshake storms were observed as intermittent
+// "tls: bad record MAC" failures).
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        20,
+			MaxIdleConnsPerHost: 10,
+			MaxConnsPerHost:     10,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+		},
+	}
+}
+
+// doWithRetry runs req with up to 3 attempts, backing off with jitter between
+// tries. Only transport-level errors are retried — a received response (even
+// a 500) is a definitive answer. All our calls are read-only: retry is safe.
+func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			backoff := 300 * time.Millisecond * time.Duration(1<<attempt)
+			time.Sleep(time.Duration(rand.Int64N(int64(backoff))))
+			// rewind the body for the next attempt (bytes.Reader ⇒ GetBody set)
+			if req.GetBody != nil {
+				if body, err := req.GetBody(); err == nil {
+					req.Body = body
+				}
+			}
+		}
+		resp, err := c.http.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // newRequest builds an authenticated request with the base headers every

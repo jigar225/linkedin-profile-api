@@ -48,7 +48,7 @@ func (c *Client) GetProfileSection(vanity, vieweeID, componentID string) (string
 	req.Header.Set("x-li-page-instance-tracking-id", "fF3VyyBJQT25ia7GrNb2kA==")
 	req.Header.Set("x-li-track", `{"clientVersion":"0.2.6951","mpVersion":"0.2.6951","osName":"web","timezoneOffset":5.5,"timezone":"Asia/Calcutta","deviceFormFactor":"DESKTOP","mpName":"web","displayDensity":1,"displayWidth":1280,"displayHeight":720}`)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return "", fmt.Errorf("rsc request: %w", err)
 	}

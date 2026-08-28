@@ -43,7 +43,7 @@ func ExtractFlightTexts(flight string) []string {
 
 	var out []string
 	for _, h := range hits {
-		t := strings.TrimSpace(h.text)
+		t := strings.TrimSpace(strings.Map(stripZeroWidth, h.text))
 		if t == "" || strings.HasPrefix(t, "$L") || len(t) < 2 {
 			continue
 		}
@@ -63,4 +63,15 @@ func unescapeJSONString(raw string) (string, bool) {
 		return "", false
 	}
 	return s, true
+}
+
+// stripZeroWidth removes invisible format chars (U+200B/C/D, BOM) that
+// LinkedIn embeds in Flight text — TrimSpace alone doesn't catch them,
+// and they'd leak through as phantom "empty-looking" leaves.
+func stripZeroWidth(r rune) rune {
+	switch r {
+	case '\u200b', '\u200c', '\u200d', '\ufeff':
+		return -1
+	}
+	return r
 }
