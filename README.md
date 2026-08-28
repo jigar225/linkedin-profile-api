@@ -39,68 +39,87 @@ Alternative auth: point `LINKEDIN_SESSION_FILE` at a Playwright
 ### `GET /v1/profile?url=<linkedin-url>`
 
 ```bash
-curl "http://localhost:8080/v1/profile?url=https://www.linkedin.com/in/islaniaaayush/"
+curl "http://localhost:8080/v1/profile?url=https://www.linkedin.com/in/maitrey-trivedi-theta-technolabs/"
 ```
 
-Profile response, `200 OK`:
+Profile response, `200 OK` (real, unedited output — this profile populates
+every field):
 
 ```json
 {
-  "name": "Aayush Islania",
-  "headline": "Cloud & Security Engineer | Microsoft 365 Migration | Endpoint Security | BitDefender",
+  "name": "Maitrey Trivedi",
+  "headline": "CEO @ Theta Technolabs ↑ || Most Companies Don’t Need More Tech, they Need Better Systems || Building Scalable AI, IoT & Blockchain Systems",
   "location": "Ahmedabad, Gujarat, India",
-  "about": "I'm a Cloud & Security Engineer currently working at Teqtive Solutions...",
   "experience": [
     {
-      "title": "Technical Engineer - Cloud and Endpoint security",
-      "company": "Teqtive Solutions",
+      "title": "CEO and Director of Sales and Growth",
+      "company": "Theta Technolabs",
       "employment_type": "Full-time",
-      "date_range": "Dec 2025 - Present",
-      "from": "Dec 2025",
-      "to": "Present"
+      "date_range": "Jan 2023 - Present",
+      "from": "Jan 2023",
+      "to": "Present",
+      "location": "Ahmedabad, Gujarat, India"
+    },
+    {
+      "title": "Founder",
+      "company": "Theta Technolabs",
+      "employment_type": "Full-time",
+      "date_range": "Sep 2015 - Present",
+      "from": "Sep 2015",
+      "to": "Present",
+      "location": "India"
     }
   ],
   "education": [
     {
-      "school": "SAL INSTITUTE OF TECH. & ENGG. RESEARCH, AHMEDABAD 067",
-      "degree": "Bachelor of Engineering - BE, Computer Science",
-      "date_range": "2021 – 2025",
-      "from": "2021",
-      "to": "2025"
+      "school": "Gujarat Technological University (GTU)",
+      "degree": "Master of Computer Applications (MCA), iPhone iPad Applications",
+      "date_range": "2010 – 2013",
+      "from": "2010",
+      "to": "2013"
+    },
+    {
+      "school": "Gujarat University",
+      "degree": "Bachelor in Computer Applications, VB.Net",
+      "date_range": "2007 – 2010",
+      "from": "2007",
+      "to": "2010"
     }
   ],
-  "skills": ["Bitdefender Endpoint Protection", "Microsoft 365"],
+  "skills": ["Sales Operations", "Marketing"],
   "certifications": [
     {
-      "title": "Introduction to Cybersecurity",
-      "issuer": "Cisco",
-      "issued_date": "Nov 2025"
+      "title": "Lead Generation & AI Tool",
+      "issuer": "IT Sales Community",
+      "issued_date": "Oct 2024"
     }
   ],
   "languages": [
-    {"name": "English", "proficiency": "Professional working proficiency"}
+    {"name": "English", "proficiency": "Professional working proficiency"},
+    {"name": "Gujarati", "proficiency": "Native or bilingual proficiency"}
   ],
   "recommendations": [
     {
       "recommender": "Sunny Vaghadia",
-      "headline": "Expert Engineer at Apexon | JavaScript | React JS | ...",
+      "headline": "Expert Engineer at Apexon | JavaScript | React JS | TypeScript | ...",
       "relationship": "Maitrey worked with Sunny but on different teams",
       "date": "June 17, 2025",
-      "text": "I had the pleasure of working with him for a couple of years..."
+      "text": "I had the pleasure of working with him for a couple of years at Vivacious Websolution..."
     }
   ],
   "contact_info": {
-    "websites": ["apnacollege.in"]
+    "websites": ["thetatechnolabs.com"]
   },
   "profile_images": [
-    "https://media.licdn.com/dms/image/v2/D4D03AQFP5AfItO2rGw/profile-displayphoto-shrink_400_400/..."
+    "https://media.licdn.com/dms/image/v2/D5603AQF63Vx4Mu8b7Q/profile-displayphoto-scale_400_400/..."
   ],
-  "linkedin_url": "https://www.linkedin.com/in/islaniaaayush/"
+  "linkedin_url": "https://www.linkedin.com/in/maitrey-trivedi-theta-technolabs/"
 }
 ```
 
 Field notes:
 
+- `about`: omitted when the profile has no About section (this one doesn't).
 - `languages`: `proficiency` is omitted when the profile doesn't state one.
 - `recommendations`: received and given recommendations are mixed in one
   array. LinkedIn's data stream has no reliable per-entry marker for the

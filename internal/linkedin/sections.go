@@ -56,7 +56,9 @@ var (
 	reIssued  = regexp.MustCompile(`^Issued\s+`)
 	reDivider = regexp.MustCompile(`\s[·•]\s`)
 	// duration-only lines ("1 yr", "2 yrs 3 mos") mark grouped-company headers.
-	reDurationOnly = regexp.MustCompile(`^\d+\s+(yrs?|mos?)\b`)
+	// The duration may carry an employment-type prefix: "Full-time · 11 yrs"
+	// (verified: maitrey's grouped Theta Technolabs card).
+	reDurationOnly = regexp.MustCompile(`^(?:[A-Za-z-]+ · )?\d+\s+(yrs?|mos?)\b`)
 	// endorsement counts ("21 endorsements") are skills metadata, not skills.
 	reEndorsements = regexp.MustCompile(`^\d[\d,]* endorsements?$`)
 	// media/document attachment leaves ("Intro_To_CyberSecurity.pdf") ride
@@ -71,6 +73,11 @@ var employmentTypes = map[string]bool{
 	"self-employed": true, "freelance": true, "apprenticeship": true,
 	"seasonal": true, "temporary": true, "volunteer": true,
 }
+
+// workModes — standalone work-mode leaves ("On-site", "Remote", "Hybrid").
+// In grouped company cards one rides between the group header and the role
+// title, breaking the [title, org, dates] assumption (verified: maitrey).
+var workModes = map[string]bool{"on-site": true, "remote": true, "hybrid": true}
 
 // noiseLeaves are UI strings, not data.
 var noiseLeaves = map[string]bool{
@@ -126,8 +133,25 @@ func splitDates(s string) (dateRange, from, to string) {
 	return rangePart, rangePart, ""
 }
 
-// ParseExperienceTurns parses an Experience-section text stream into entries.
-// Pattern per entry: [title, org(·type), dates, (optional) location].
+// looksLikeTitle guards the grouped-role rescue: role titles are short,
+// sentence-free, emoji-free (descriptions/bullets are not).
+func looksLikeTitle(s string) bool {
+	if len(s) == 0 || len(s) > 70 || strings.Contains(s, ". ") || looksLikeDates(s) {
+		return false
+	}
+	for _, r := range s {
+		if r > 0x2FFF {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseExperience parses an Experience-section text stream into entries.
+// Patterns per entry: [title, org(·type), dates, (optional) location], plus
+// grouped-company shapes: [title, type-only, dates] and — with no org line
+// at all — [work-mode?, title, dates] under a group header (verified:
+// maitrey's Theta Technolabs card, where "Founder" would otherwise drop).
 func ParseExperience(leaves []string) []Experience {
 	var out []Experience
 	// date-line indices
@@ -138,13 +162,33 @@ func ParseExperience(leaves []string) []Experience {
 		}
 	}
 	// Pre-scan group-company headers: a company line followed by a
-	// duration-only line ("Teqtive Solutions" + "1 yr"). Grouped roles
-	// (org line = employment type only) inherit the nearest header above.
-	var groupIdx []int
+	// duration-only line ("Teqtive Solutions" + "1 yr", or
+	// "Theta Technolabs" + "Full-time · 11 yrs"). Grouped roles inherit the
+	// nearest header above; the header's type prefix is the employment type.
+	type groupHdr struct {
+		idx     int
+		company string
+		empType string
+	}
+	var groups []groupHdr
 	for i := 0; i+1 < len(leaves); i++ {
 		if reDurationOnly.MatchString(leaves[i+1]) && !isNoise(leaves[i]) && !looksLikeDates(leaves[i]) {
-			groupIdx = append(groupIdx, i)
+			emp := ""
+			if p := reDivider.Split(leaves[i+1], 2); len(p) == 2 && employmentTypes[strings.ToLower(strings.TrimSpace(p[0]))] {
+				emp = strings.TrimSpace(p[0])
+			}
+			groups = append(groups, groupHdr{i, leaves[i], emp})
 		}
+	}
+	nearestGroup := func(di int) (groupHdr, bool) {
+		var best groupHdr
+		found := false
+		for _, g := range groups {
+			if g.idx < di {
+				best, found = g, true
+			}
+		}
+		return best, found
 	}
 
 	for k, di := range dateIdx {
@@ -153,17 +197,27 @@ func ParseExperience(leaves []string) []Experience {
 		}
 		title := leaves[di-2]
 		org := leaves[di-1]
-		if isNoise(title) || isNoise(org) || looksLikeDates(title) {
-			continue
-		}
 		company, empType := splitOrgLine(org)
-		if empType == "" && employmentTypes[strings.ToLower(company)] {
-			// grouped role: org line was ONLY the employment type
-			empType = company
-			company = ""
-			for _, gi := range groupIdx {
-				if gi < di-2 {
-					company = leaves[gi]
+		switch {
+		case (isNoise(title) || workModes[strings.ToLower(title)]) && !isNoise(org) && !looksLikeDates(org):
+			// Grouped role with NO org line: [work-mode?, title, dates] —
+			// title sits at di-1, noise ("Expanded" from the previous
+			// description) or a work-mode word sits at di-2.
+			g, ok := nearestGroup(di)
+			if !ok || !looksLikeTitle(org) {
+				continue
+			}
+			title, company, empType = org, g.company, g.empType
+		default:
+			if isNoise(title) || isNoise(org) || looksLikeDates(title) {
+				continue
+			}
+			if empType == "" && employmentTypes[strings.ToLower(company)] {
+				// grouped role: org line was ONLY the employment type
+				empType = company
+				company = ""
+				if g, ok := nearestGroup(di - 2); ok {
+					company = g.company
 				}
 			}
 		}
@@ -247,6 +301,13 @@ func ParseEducation(leaves []string) []Education {
 			i += 3
 			continue
 		}
+		// A bare title directly followed by a long description block is a
+		// certification tail riding under the education section, not a
+		// school (verified: maitrey — cert title + 245-char description).
+		if i+1 < len(leaves) && isEduDescription(leaves[i+1]) {
+			i++ // skip the title; the description line breaks the walk below
+			continue
+		}
 		e := Education{School: l}
 		if i+1 < len(leaves) && !isNoise(leaves[i+1]) && !reAttachment.MatchString(leaves[i+1]) &&
 			!looksLikeDates(leaves[i+1]) && !isEduDescription(leaves[i+1]) && !eduSectionHeaders[leaves[i+1]] {
@@ -316,9 +377,14 @@ func ParseLanguages(leaves []string) []Language {
 
 // skillJunk marks endorsement/assessment metadata lines — they ride along
 // with skill names in skills sections (verified: Shradha) but aren't skills.
+// Also: language names/proficiency phrases (a standalone languages chunk
+// passes the small-part skills heuristic — verified: maitrey Part4) and
+// endorser headline lines ("Role at Company" — verified: maitrey Part7).
 func skillJunk(s string) bool {
 	return strings.HasPrefix(s, "Endorsed by ") ||
 		reEndorsements.MatchString(s) ||
+		knownLanguages[s] || knownProficiencies[s] ||
+		strings.Contains(s, " at ") ||
 		s == "Passed LinkedIn Skill Assessment"
 }
 
