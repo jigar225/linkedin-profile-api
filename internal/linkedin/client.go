@@ -36,7 +36,11 @@ func NewClient(liAt, jsessionID string) *Client {
 		http: newHTTPClient(),
 		// LinkedIn sets JSESSIONID as a quoted cookie value ("ajax:...") —
 		// reproduce that in the Cookie header; the csrf-token header wants it raw.
-		cookieHdr: `li_at=` + strings.TrimSpace(liAt) + `; JSESSIONID="` + csrf + `"`,
+		// The lang cookie pins the locale: without it, flagship-web serves the
+		// geo-IP locale and IGNORES x-li-lang (verified on Railway: a NL-geo'd
+		// egress IP got Dutch — "Op locatie" instead of "On-site" — which
+		// silently kills every English-anchored parser).
+		cookieHdr: `li_at=` + strings.TrimSpace(liAt) + `; JSESSIONID="` + csrf + `"; lang=v=2&lang=en-us`,
 		csrfToken: csrf,
 	}
 }
