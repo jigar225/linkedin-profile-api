@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+linkedin_session.json
+
+
+*_output.json
+
+
+/linkedin-profile-api
+
+
+.DS_Store

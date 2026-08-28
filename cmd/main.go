@@ -1,0 +1,77 @@
+// LinkedIn Profile API — reverse-engineered, browserless.
+//
+// Server mode (default):  go run ./cmd/linkedin-profile-api                       → serves /v1/profile?url=...
+// CLI mode (debug):       go run ./cmd/linkedin-profile-api -url <linkedin-url>   → one-shot fetch, prints JSON
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+
+	"linkedin-profile-api/internal/linkedin"
+	"linkedin-profile-api/internal/server"
+)
+
+// envOr returns the env var value, or fallback when unset/empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func main() {
+	url := flag.String("url", "", "one-shot CLI mode: fetch this LinkedIn URL and print JSON")
+	session := flag.String("session",
+		envOr("LINKEDIN_SESSION_FILE", "../linkedin_session.json"),
+		"path to session cookies JSON (env: LINKEDIN_SESSION_FILE; default assumes repo root, file kept one level up = outside the repo)")
+	flag.Parse()
+
+	// Built once: server handlers reuse it (connection pooling) across requests.
+	client, err := linkedin.NewClientFromSessionFile(*session)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	if *url != "" {
+		runCLI(client, *url)
+		return
+	}
+
+	port := envOr("PORT", "8080")
+	if err := server.New(client).ListenAndServe(":" + port); err != nil {
+		fmt.Fprintln(os.Stderr, "server error:", err)
+		os.Exit(1)
+	}
+}
+
+// runCLI fetches one URL and prints the JSON — debug / golden-regression mode.
+func runCLI(client *linkedin.Client, raw string) {
+	typ, slug, err := linkedin.ClassifyURL(raw)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("🔍 fetching %s %q…\n\n", typ, slug)
+	var result any
+	switch typ {
+	case linkedin.URLTypeProfile:
+		result, err = client.FetchProfile(slug, "https://www.linkedin.com/in/"+slug+"/")
+	case linkedin.URLTypeCompany, linkedin.URLTypeSchool:
+		result, err = client.GetCompany(slug, typ.String())
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	out, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Println(string(out))
+	file := typ.String() + "_output.json"
+	os.WriteFile(file, out, 0644)
+	fmt.Printf("\n💾 saved → %s\n", file)
+}
