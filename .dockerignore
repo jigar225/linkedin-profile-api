@@ -1,0 +1,4 @@
+.git
+.env
+debug-dumps/
+*_output.json
