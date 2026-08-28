@@ -25,6 +25,20 @@ type Client struct {
 	csrfToken  string // JSESSIONID value, quotes stripped — LinkedIn's csrf-token header
 }
 
+// NewClient builds a Client from the two cookies that actually matter:
+// li_at (auth) + JSESSIONID (CSRF). Values may be pasted from DevTools
+// with or without surrounding quotes — we normalize either way.
+func NewClient(liAt, jsessionID string) *Client {
+	csrf := strings.Trim(strings.TrimSpace(jsessionID), `"`)
+	return &Client{
+		http: &http.Client{Timeout: 30 * time.Second},
+		// LinkedIn sets JSESSIONID as a quoted cookie value ("ajax:...") —
+		// reproduce that in the Cookie header; the csrf-token header wants it raw.
+		cookieHdr: `li_at=` + strings.TrimSpace(liAt) + `; JSESSIONID="` + csrf + `"`,
+		csrfToken: csrf,
+	}
+}
+
 // sessionFile mirrors Playwright's storage_state JSON (linkedin_session.json).
 type sessionFile struct {
 	Cookies []struct {
