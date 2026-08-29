@@ -2,11 +2,13 @@
 .env.*
 !.env.example
 linkedin_session.json
+network_log*.jsonl
 
 
 *_output.json
 
 /debug-dumps/
+/docs
 
 
 /linkedin-profile-api

@@ -6,7 +6,8 @@ profiles (`/in/`), companies (`/company/`) and schools (`/school/`).
 No browser involved. The server replays the same internal requests LinkedIn's
 own web app makes (Voyager GraphQL + React Flight streams), authenticated with
 your own session cookies. Pure Go — one small dependency (godotenv), everything
-else is the standard library.
+else is the standard library. How those requests were identified:
+[docs/recon.md](docs/recon.md).
 
 ## Run
 
