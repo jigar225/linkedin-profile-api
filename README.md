@@ -34,6 +34,13 @@ go run ./cmd           # .env is loaded automatically
 Alternative auth: point `LINKEDIN_SESSION_FILE` at a Playwright
 `storage_state` JSON. Used only when `LI_AT`/`JSESSIONID` are not set.
 
+Request pacing: by default the server shapes its upstream calls like the real
+LinkedIn web app (sections fetched in waves with pauses, the contact overlay
+trailing last like a clicked overlay, not all at once) — a profile fetch
+takes ~13-18s on a cache miss. `LINKEDIN_PACING=fast`
+disables the pauses for local development; don't use it against a real
+account you care about.
+
 ## API
 
 ### `GET /v1/profile?url=<linkedin-url>`
@@ -104,7 +111,8 @@ every field):
       "headline": "Expert Engineer at Apexon | JavaScript | React JS | TypeScript | ...",
       "relationship": "Maitrey worked with Sunny but on different teams",
       "date": "June 17, 2025",
-      "text": "I had the pleasure of working with him for a couple of years at Vivacious Websolution..."
+      "text": "I had the pleasure of working with him for a couple of years at Vivacious Websolution...",
+      "direction": "received"
     }
   ],
   "contact_info": {
@@ -121,11 +129,10 @@ Field notes:
 
 - `about`: omitted when the profile has no About section (this one doesn't).
 - `languages`: `proficiency` is omitted when the profile doesn't state one.
-- `recommendations`: received and given recommendations are mixed in one
-  array. LinkedIn's data stream has no reliable per-entry marker for the
-  direction, so we don't guess — the `relationship` line always names both
-  parties ("Maitrey managed Saumya directly" vs "Shradha was senior to
-  Varun ...").
+- `recommendations[].direction`: `"received"` or `"given"`, read from the
+  section's Received/Given toggle state in the stream. Omitted when the
+  stream carries no toggle state — we don't guess. The `relationship` line
+  always names both parties either way ("Maitrey managed Saumya directly").
 - `contact_info`: omitted entirely when the member shares nothing with your
   account. Email/phone are usually only visible for 1st-degree connections;
   websites/socials sometimes show for anyone.

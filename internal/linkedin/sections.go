@@ -38,7 +38,7 @@ type Language struct {
 	Proficiency string `json:"proficiency,omitempty"`
 }
 
-// Recommendation is one received recommendation. Relationship is kept
+// Recommendation is one recommendation entry. Relationship is kept
 // verbatim ("managed Saumya directly") — the phrasing varies too much to
 // enum-ify.
 type Recommendation struct {
@@ -47,6 +47,11 @@ type Recommendation struct {
 	Relationship string `json:"relationship,omitempty"`
 	Date         string `json:"date,omitempty"`
 	Text         string `json:"text"`
+	// Direction is "received" or "given", read from the stream's SDUI
+	// Received/Given toggle state (pill_checked bindings — the ONE thing
+	// text order provably cannot tell us). Empty when the stream carries
+	// no toggle state; never guessed.
+	Direction string `json:"direction,omitempty"`
 }
 
 // ---------- text-stream parsing (PR #298 philosophy: parse what a human reads) ----------
@@ -484,14 +489,52 @@ func looksLikeRecommendations(leaves []string) bool {
 	return false
 }
 
+// rePillState captures the Received/Given toggle state embedded in the
+// stream's SDUI state list:
+//
+//	...pill_checked<tracking-id>_recommendation_(received|given)"}}},
+//	"value":{"$case":"booleanValue","booleanValue":(true|false)}
+var rePillState = regexp.MustCompile(`pill_checked[^"]*recommendation_(received|given)"\}\}\},"value":\{"\$case":"booleanValue","booleanValue":(true|false)`)
+
+// recommendationDirection reads which list the stream renders from the
+// toggle's initial state. Toggle-click SetState action payloads share the
+// same local shape, so matches wrapped in a SetState are rejected and the
+// first clean occurrence per key wins (verified: maitrey Part2 raw stream).
+// "" when no toggle state exists — direction is then omitted, never guessed.
+func recommendationDirection(flight string) string {
+	state := map[string]bool{}
+	for _, m := range rePillState.FindAllStringSubmatchIndex(flight, -1) {
+		key := flight[m[2]:m[3]]
+		if _, seen := state[key]; seen {
+			continue
+		}
+		from := m[0] - 200
+		if from < 0 {
+			from = 0
+		}
+		if strings.Contains(flight[from:m[0]], "SetState") {
+			continue // toggle-click action payload, not the initial state
+		}
+		state[key] = flight[m[4]:m[5]] == "true"
+	}
+	switch {
+	case state["received"] && !state["given"]:
+		return "received"
+	case state["given"] && !state["received"]:
+		return "given"
+	}
+	return ""
+}
+
 // ParseRecommendations parses a recommendations-section stream. Stream
 // layout (verified): preview cards [name, headline]* first, then per-entry
 // headers ["· 3rd+" badge, headline, relationship-line], THEN the entry
 // texts as paragraph runs each closed by an "Expanded" leaf — headers and
 // texts pair up IN ORDER. Recommender name comes from matching the entry
 // headline back to the preview cards (exact LinkedIn data); the verb-split
-// of the relationship line is the fallback.
-func ParseRecommendations(leaves []string, ownerFirstName string) []Recommendation {
+// of the relationship line is the fallback. direction stamps every entry
+// (stream-level toggle state — one list renders per stream).
+func ParseRecommendations(leaves []string, ownerFirstName, direction string) []Recommendation {
 	var relIdx []int
 	for i, l := range leaves {
 		if reRelationship.MatchString(l) {
@@ -531,7 +574,7 @@ func ParseRecommendations(leaves []string, ownerFirstName string) []Recommendati
 				rest = leaves[ri][i+2+j+2:]
 			}
 		}
-		rec := Recommendation{Headline: headline, Relationship: rest, Date: date}
+		rec := Recommendation{Headline: headline, Relationship: rest, Date: date, Direction: direction}
 		// verb-split fallback: "<Owner> managed Saumya directly" -> "Saumya"
 		if ownerFirstName != "" && strings.HasPrefix(rest, ownerFirstName+" ") {
 			r := rest[len(ownerFirstName)+1:]
@@ -639,7 +682,10 @@ func ParseAboveActivity(leaves []string) (about string, topSkills []string) {
 //	education:       only when an "Education" header leaf is present
 //	languages:       dictionary filter (works headerless — e.g. a lone "French")
 //	skills:          small parts of short skill-ish lines
-func ClassifyBelowActivityPart(leaves []string, prof *Profile, addSkills func([]string), addLangs func([]Language), ownerFirstName string) {
+//
+// flight is the raw stream (needed for the recommendation-direction toggle
+// state, which leaf extraction deliberately drops).
+func ClassifyBelowActivityPart(leaves []string, flight string, prof *Profile, addSkills func([]string), addLangs func([]Language), ownerFirstName string) {
 	hasIssuedLine := false
 	for _, l := range leaves {
 		if strings.HasPrefix(l, "Issued ") && !strings.HasPrefix(l, "Issued by") {
@@ -649,7 +695,8 @@ func ClassifyBelowActivityPart(leaves []string, prof *Profile, addSkills func([]
 	}
 	switch {
 	case looksLikeRecommendations(leaves):
-		prof.Recommendations = append(prof.Recommendations, ParseRecommendations(leaves, ownerFirstName)...)
+		direction := recommendationDirection(flight)
+		prof.Recommendations = append(prof.Recommendations, ParseRecommendations(leaves, ownerFirstName, direction)...)
 	case hasIssuedLine || containsLeaf(leaves, "Education"):
 		if hasIssuedLine {
 			prof.Certifications = append(prof.Certifications, ParseCertifications(leaves)...)
