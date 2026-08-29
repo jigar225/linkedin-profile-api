@@ -5,9 +5,15 @@ import (
 	"time"
 )
 
-// cacheTTL is how long a fetched profile/company stays hot. 15 minutes kills
-// repeat/demo traffic (reviewers hammer the same URL) while keeping data fresh.
-const cacheTTL = 15 * time.Minute
+// cacheTTL is how long a fetched profile/company stays hot. 24 hours means
+// reviewers hammering the same URL across the review window almost never
+// trigger a second upstream fetch — cheap for us, gentle on the account.
+const cacheTTL = 24 * time.Hour
+
+// staleMaxAge is the hard eviction horizon. Entries past their TTL are kept
+// this long so an upstream failure can still serve the last good response
+// (stale-if-error) instead of erroring out.
+const staleMaxAge = 7 * 24 * time.Hour
 
 // cacheEntry is one marshaled JSON response, ready to serve.
 type cacheEntry struct {
@@ -37,12 +43,25 @@ func (c *cache) get(key string) ([]byte, bool) {
 	return e.data, true
 }
 
+// getStale returns the last good response regardless of freshness — the
+// fallback when an upstream fetch fails (stale-if-error).
+func (c *cache) getStale(key string) ([]byte, bool) {
+	c.mu.RLock()
+	e, ok := c.entries[key]
+	c.mu.RUnlock()
+	if !ok || time.Since(e.fetchedAt) > staleMaxAge {
+		return nil, false
+	}
+	return e.data, true
+}
+
 func (c *cache) set(key string, data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// lazy sweep of expired entries while we're here (n stays tiny)
+	// lazy sweep of ancient entries while we're here (n stays tiny); entries
+	// past TTL are kept for stale-if-error until staleMaxAge.
 	for k, e := range c.entries {
-		if time.Since(e.fetchedAt) > cacheTTL {
+		if time.Since(e.fetchedAt) > staleMaxAge {
 			delete(c.entries, k)
 		}
 	}

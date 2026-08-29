@@ -169,8 +169,29 @@ Errors, always `{"error": "..."}`:
 502  upstream LinkedIn failure (session expired, rate limited, not found)
 ```
 
+Responses carry `X-Cache: hit` when served from cache, `X-Cache: stale` when
+the upstream fetch failed and the last good response was served instead.
+
 ### `GET /healthz`
 
 ```json
 {"status": "ok"}
 ```
+
+## Known limitations
+
+- Auth is a logged-in session's cookies. If the session expires or LinkedIn
+  restricts the account, profile fetches fail until fresh cookies are set
+  (`/healthz` stays green — it only checks the process, not the session).
+- All upstream calls go out from one account, so volume is deliberately
+  limited: a global fetch cap (429 + Retry-After when full), a 24h response
+  cache, singleflight coalescing, and human-paced request waves. Scaling
+  past that means a pool of sessions, not more per-account volume.
+- Section parsing anchors on English text in LinkedIn's internal stream
+  format, which LinkedIn can change at any time. The defense is validation
+  (empty name/sections = a loud 502, never silently wrong data) plus
+  golden-profile regression tests.
+- Email and phone in `contact_info` are only returned when the target shares
+  them with the authenticated account — typically 1st-degree connections.
+- Connection counts are not served for other members' profiles; companies
+  return `followers`, personal profiles do not.

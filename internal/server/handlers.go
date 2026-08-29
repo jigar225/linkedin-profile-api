@@ -47,6 +47,7 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Singleflight: concurrent requests for the same URL share ONE upstream
 	// fetch — the owner works, waiters block and get the same bytes.
+	servedStale := false
 	data, err := s.flights.do(key, func() ([]byte, error) {
 		// a waiter may have queued while the owner fetched → cache is hot now
 		if data, ok := s.cache.get(key); ok {
@@ -70,6 +71,13 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			result, fetchErr = s.client.GetCompany(slug, typ.String())
 		}
 		if fetchErr != nil {
+			// Stale-if-error: serve the last good response (any age) rather
+			// than erroring — a session expiry or account restriction then
+			// degrades the demo to cached data instead of 502s.
+			if stale, ok := s.cache.getStale(key); ok {
+				servedStale = true
+				return stale, nil
+			}
 			return nil, fetchErr
 		}
 
@@ -92,6 +100,9 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		// Upstream failure: session rejected, rate limited, not found, network.
 		writeError(w, http.StatusBadGateway, "linkedin fetch failed: "+err.Error())
 		return
+	}
+	if servedStale {
+		w.Header().Set("X-Cache", "stale")
 	}
 	writeJSONBytes(w, http.StatusOK, data)
 }
