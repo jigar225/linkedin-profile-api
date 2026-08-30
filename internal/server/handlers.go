@@ -103,7 +103,7 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		log.Printf("linkedin fetch failed: %v", err)
 		switch {
 		case errors.Is(err, linkedin.ErrSessionExpired):
-			writeError(w, http.StatusUnauthorized, "linkedin session expired — refresh LI_AT/JSESSIONID cookies")
+			writeError(w, http.StatusUnauthorized, "linkedin session expired — re-run scripts/linkedin_login.py")
 		case errors.Is(err, linkedin.ErrProfileNotFound):
 			writeError(w, http.StatusNotFound, "profile not found (or not visible to this account)")
 		default:

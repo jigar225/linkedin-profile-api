@@ -3,14 +3,16 @@
 HTTP API that takes a LinkedIn URL and returns structured JSON. Works with
 profiles (`/in/`), companies (`/company/`) and schools (`/school/`).
 
-No browser involved. The server replays the same internal requests LinkedIn's
-own web app makes (Voyager GraphQL + React Flight streams), authenticated with
-your own session cookies. The TLS/HTTP2 layer impersonates real Chrome
-(bogdanfinn/tls-client — LinkedIn fingerprints the handshake before it reads
-a single header, and Go's stock ClientHello is a world-famous bot tell);
-above that, two small dependencies (tls-client, godotenv), everything
-else is the standard library. How those requests were identified:
-[docs/recon.md](docs/recon.md).
+No browser at serve time. The session is BORN once in a real browser
+(cold path — `scripts/linkedin_login.py`), then a pure-Go client replays
+the same internal requests LinkedIn's own web app makes: 3 calls per
+profile (Voyager GraphQL topcard → Voyager dash full profile → RSC contact
+overlay), authenticated with the browser's full cookie jar. The TLS/HTTP2
+layer impersonates real Chrome (bogdanfinn/tls-client — LinkedIn
+fingerprints the handshake before it reads a single header, and Go's stock
+ClientHello is a world-famous bot tell). Direct dependencies: tls-client,
+godotenv. How those requests were identified — and why sessions used to
+die: [docs/recon.md](docs/recon.md).
 
 ## Run
 
@@ -61,6 +63,10 @@ REQUIRED on cloud — a session born on a home IP but used from a datacenter
 egress is the #1 session-kill pattern ("impossible travel"). Match the
 proxy's geography to the birth machine's.
 
+⚠️ The API has NO auth of its own. Anyone who finds your deployment URL can
+spend your LinkedIn account's daily budget (and get it flagged). Keep the
+URL private, or front it with a proxy that adds auth.
+
 Request pacing: a profile fetch is 3 jittered calls (topcard → dash →
 contact overlay) with fresh per-page-load tracking IDs — a few seconds on a
 cache miss. Fewer requests = lower velocity score; every call is one the
@@ -72,79 +78,95 @@ local development; don't use it against a real account you care about.
 ### `GET /v1/profile?url=<linkedin-url>`
 
 ```bash
-curl "http://localhost:8080/v1/profile?url=https://www.linkedin.com/in/maitrey-trivedi-theta-technolabs/"
+curl "http://localhost:8080/v1/profile?url=https://www.linkedin.com/in/bibek-ranjan-saha/"
 ```
 
-Profile response, `200 OK` (real, unedited output — this profile populates
-every field):
+Profile response, `200 OK` (real, unedited output from the live deployment —
+trimmed where marked):
 
 ```json
 {
-  "name": "Maitrey Trivedi",
-  "headline": "CEO @ Theta Technolabs ↑ || Most Companies Don’t Need More Tech, they Need Better Systems || Building Scalable AI, IoT & Blockchain Systems",
-  "location": "Ahmedabad, Gujarat, India",
+  "name": "Bibek saha",
+  "first_name": "Bibek",
+  "last_name": "saha",
+  "headline": "Full Stack & Mobile App Developer | Flutter, Java, React Native | ...",
+  "location": "Mumbai Metropolitan Region, India",
+  "country": "India",
+  "country_iso": "IN",
+  "public_identifier": "bibek-ranjan-saha",
+  "profile_urn": "urn:li:fsd_profile:ACoAAC6vFiwBoVYUHgCm7xpFjJKezHwHHz8UXUk",
+  "member_urn": "urn:li:member:783226412",
+  "premium": false,
+  "creator": true,
+  "influencer": false,
+  "profile_created_at": "2019-12-16",
+  "locale": "en_US",
+  "about": "I am a Software Engineer with 3+ years of experience building cross-platform mobile applications...",
   "experience": [
     {
-      "title": "CEO and Director of Sales and Growth",
-      "company": "Theta Technolabs",
+      "title": "Flutter developer",
+      "company": "Skillmine Technology",
       "employment_type": "Full-time",
-      "date_range": "Jan 2023 - Present",
-      "from": "Jan 2023",
+      "date_range": "Jun 2026 - Present",
+      "from": "Jun 2026",
       "to": "Present",
-      "location": "Ahmedabad, Gujarat, India"
+      "location": "Thane, Maharashtra, India"
     },
     {
-      "title": "Founder",
-      "company": "Theta Technolabs",
+      "title": "Mobile Application Developer",
+      "company": "Boon.ai",
       "employment_type": "Full-time",
-      "date_range": "Sep 2015 - Present",
-      "from": "Sep 2015",
-      "to": "Present",
-      "location": "India"
+      "date_range": "Apr 2025 - May 2026",
+      "from": "Apr 2025",
+      "to": "May 2026",
+      "location": "Hyderabad"
     }
   ],
   "education": [
     {
-      "school": "Gujarat Technological University (GTU)",
-      "degree": "Master of Computer Applications (MCA), iPhone iPad Applications",
-      "date_range": "2010 – 2013",
-      "from": "2010",
-      "to": "2013"
-    },
-    {
-      "school": "Gujarat University",
-      "degree": "Bachelor in Computer Applications, VB.Net",
-      "date_range": "2007 – 2010",
-      "from": "2007",
-      "to": "2010"
+      "school": "Gandhi Institute of Engineering and Technology (GIET), Gunupur",
+      "degree": "Bachelor of Technology - BTech, Computer Science",
+      "date_range": "2019 - 2023",
+      "from": "2019",
+      "to": "2023"
     }
   ],
-  "skills": ["Sales Operations", "Marketing"],
+  "skills": ["Application Development", "Application Architecture", "..."],
   "certifications": [
     {
-      "title": "Lead Generation & AI Tool",
-      "issuer": "IT Sales Community",
-      "issued_date": "Oct 2024"
+      "title": "Google Play Academy - Store Listing Certificate",
+      "issuer": "Google Play",
+      "issued_date": "Aug 2025"
     }
   ],
   "languages": [
-    {"name": "English", "proficiency": "Professional working proficiency"},
-    {"name": "Gujarati", "proficiency": "Native or bilingual proficiency"}
+    {"name": "English", "proficiency": "Full professional proficiency"},
+    {"name": "Hindi", "proficiency": "Native or bilingual proficiency"}
   ],
   "recommendations": [],
   "contact_info": {
-    "websites": ["thetatechnolabs.com"]
+    "websites": ["bibek-saha.web.app"]
   },
-  "profile_images": [
-    "https://media.licdn.com/dms/image/v2/D5603AQF63Vx4Mu8b7Q/profile-displayphoto-scale_400_400/..."
-  ],
-  "linkedin_url": "https://www.linkedin.com/in/maitrey-trivedi-theta-technolabs/"
+  "profile_images": ["https://media.licdn.com/dms/image/v2/D5603AQHyDvWXmSqDfg/profile-displayphoto-scale_400_400/..."],
+  "cover_images": ["https://media.licdn.com/dms/image/v2/D4D16AQE6Glqye3OJ-w/profile-displaybackgroundimage-shrink_350_1400/..."],
+  "profile_image_alt": "Bibek saha",
+  "profile_image_ai_generated": false,
+  "relationship_status": "not_connected",
+  "network_distance": "OUT_OF_NETWORK",
+  "invitation_status": "none",
+  "linkedin_url": "https://www.linkedin.com/in/bibek-ranjan-saha/"
 }
 ```
 
 Field notes:
 
-- `about`: omitted when the profile has no About section (this one doesn't).
+- Identity block: `profile_urn`/`member_urn` are LinkedIn's internal IDs;
+  `premium`/`creator`/`influencer` are the account badges;
+  `profile_created_at` is the member-since date (ISO).
+- `relationship_status`: `self` | `connected` | `not_connected` — how the
+  VIEWING account relates to this profile; `network_distance` e.g.
+  `OUT_OF_NETWORK`; `invitation_status`: `none` | `pending`.
+- `about`: omitted when the profile has no About section.
 - `languages`: `proficiency` is omitted when the profile doesn't state one.
 - `recommendations`: currently always empty — both sources were
   session-kill suspects and are retired (recoverable via git history).
@@ -181,7 +203,7 @@ Errors, always `{"error": "..."}`:
 400  missing "url" query parameter
 400  unsupported LinkedIn URL type (response includes the supported list:
      /in/, /company/, /school/)
-401  linkedin session expired — refresh LI_AT/JSESSIONID cookies
+401  linkedin session expired — re-run scripts/linkedin_login.py
 404  profile not found (or not visible to this account)
 429  too many upstream fetches in flight (Retry-After header set)
 502  upstream LinkedIn failure — retry shortly
@@ -198,17 +220,20 @@ the upstream fetch failed and the last good response was served instead.
 
 ## Known limitations
 
-- Auth is a logged-in session's cookies. If the session expires or LinkedIn
-  restricts the account, profile fetches fail until fresh cookies are set
-  (`/healthz` stays green — it only checks the process, not the session).
+- Auth is a browser-born session's cookie jar. When LinkedIn kills it
+  (401s), fetches fail until the session is re-birthed locally
+  (`scripts/linkedin_login.py`) — `/healthz` stays green regardless, it
+  only checks the process.
 - All upstream calls go out from one account, so volume is deliberately
   limited: a global fetch cap (429 + Retry-After when full), a 24h response
-  cache, singleflight coalescing, and human-paced request waves. Scaling
-  past that means a pool of sessions, not more per-account volume.
-- Section parsing anchors on English text in LinkedIn's internal stream
-  format, which LinkedIn can change at any time. The defense is validation
-  (empty name/sections = a loud 502, never silently wrong data) plus
-  golden-profile regression tests.
+  cache, singleflight coalescing, and jittered human pacing (3 calls per
+  profile). Scaling past that means a pool of sessions + residential IPs,
+  not more per-account volume (community-verified safe budget:
+  ~10-20 profiles/day/account).
+- Sections come from LinkedIn's typed dash entities (structured dates,
+  enums) — layout-independent, but LinkedIn can still change or retire the
+  decoration at any time. The defense is validation (empty name/sections =
+  a loud 502, never silently wrong data) plus parser unit tests.
 - Email and phone in `contact_info` are only returned when the target shares
   them with the authenticated account — typically 1st-degree connections.
 - Connection counts are not served for other members' profiles; companies

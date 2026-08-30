@@ -25,7 +25,7 @@ import (
 // ErrSessionExpired signals LinkedIn killed our session server-side
 // (dead li_at). Detection: the 302-to-self loop (with li_at deletion) or a
 // bounce to the login/authwall/checkpoint pages. Definitive — never retried.
-var ErrSessionExpired = errors.New("linkedin session expired — refresh LI_AT/JSESSIONID cookies")
+var ErrSessionExpired = errors.New("linkedin session expired — re-birth it: scripts/linkedin_login.py")
 
 // chromeVersion pins what our HEADERS claim. It must match the account's
 // device dossier (the real browser the session was born in — captured:
