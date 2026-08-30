@@ -25,6 +25,12 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// fileExists reports whether path names a readable regular file.
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular()
+}
+
 func main() {
 	// Log platforms (Railway et al.) classify anything on stderr as
 	// error-level; our routine logs are info — send them to stdout.
@@ -42,21 +48,42 @@ func main() {
 
 	var client *linkedin.Client
 	liAt, jsessionID := os.Getenv("LI_AT"), os.Getenv("JSESSIONID")
+	sessionJSON := os.Getenv("LINKEDIN_SESSION_JSON")
 	switch {
-	case liAt != "" && jsessionID != "":
-		client = linkedin.NewClient(liAt, jsessionID)
-		fmt.Println("auth: LI_AT + JSESSIONID env cookies")
-	case liAt != "" || jsessionID != "":
-		fmt.Fprintln(os.Stderr, "error: set BOTH LI_AT and JSESSIONID, or neither (falls back to session file)")
-		os.Exit(1)
-	default:
+	case sessionJSON != "":
+		// CLOUD path: the full jar rides an env var (no filesystem for
+		// secrets on Railway et al.). Paste the storage_state file's
+		// contents verbatim.
+		var err error
+		client, err = linkedin.NewClientFromSessionJSON([]byte(sessionJSON))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: LINKEDIN_SESSION_JSON:", err)
+			os.Exit(1)
+		}
+		fmt.Println("auth: LINKEDIN_SESSION_JSON env (full jar)")
+	case fileExists(*session):
+		// LOCAL path: the full cookie jar from a browser-born session (cold
+		// path — scripts/linkedin_login.py). Replay consistency needs the
+		// WHOLE jar: bcookie is LinkedIn's device ID and the session's
+		// dossier expects it (docs/recon.md, round 7).
 		var err error
 		client, err = linkedin.NewClientFromSessionFile(*session)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Println("auth: session file", *session)
+		fmt.Println("auth: session file (full jar):", *session)
+	case liAt != "" && jsessionID != "":
+		// FALLBACK: stripped jar (li_at + JSESSIONID only) — works, but the
+		// missing device cookies weaken the replay story. Prefer the jar.
+		client = linkedin.NewClient(liAt, jsessionID)
+		fmt.Println("auth: LI_AT + JSESSIONID env cookies (stripped jar — prefer the session jar)")
+	case liAt != "" || jsessionID != "":
+		fmt.Fprintln(os.Stderr, "error: set BOTH LI_AT and JSESSIONID, or neither (falls back to session jar)")
+		os.Exit(1)
+	default:
+		fmt.Fprintln(os.Stderr, "error: no auth found — run scripts/linkedin_login.py to birth a session, or set LINKEDIN_SESSION_JSON / LI_AT + JSESSIONID")
+		os.Exit(1)
 	}
 
 	if *url != "" {

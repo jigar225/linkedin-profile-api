@@ -9,6 +9,12 @@ import (
 	"strings"
 )
 
+// liAppVersion / liTrack mirror LinkedIn's current web build (recon round 4,
+// Aug 2026: 0.2.6975). LinkedIn tolerates stale versions, but keep them
+// current — they live in ONE place so a re-capture means a one-line change.
+const liAppVersion = "0.2.6975"
+const liTrack = `{"clientVersion":"` + liAppVersion + `","mpVersion":"` + liAppVersion + `","osName":"web","timezoneOffset":5.5,"timezone":"Asia/Calcutta","deviceFormFactor":"DESKTOP","mpName":"web","displayDensity":1,"displayWidth":1280,"displayHeight":720}`
+
 // Contact info lives behind the "Contact info" overlay — a navigation action
 // (NOT a component call), captured in recon round 4. Returns a small Flight
 // payload (~18KB) with whatever the member shares with our account: websites/
@@ -51,8 +57,8 @@ func (c *Client) GetContactInfo(vanity, givenName, familyName string) (string, e
 	req.Header.Set("x-li-rsc-stream", "true")
 	req.Header.Set("x-li-application-version", liAppVersion)
 	req.Header.Set("x-li-anchor-page-key", "d_flagship3_profile_view_base")
-	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_profile_view_base;TKAfGsUtQ1atc3Zckuzsew==")
-	req.Header.Set("x-li-page-instance-tracking-id", "TKAfGsUtQ1atc3Zckuzsew==")
+	// x-li-page-instance(+ -tracking-id) come from newRequest's page context —
+	// minted fresh per profile view, never replayed frozen.
 	req.Header.Set("x-li-track", liTrack)
 	req.Header.Set("x-li-layout-tree", `["com.linkedin.sdui.flagshipnav.profile.Profile#345f13a","com.linkedin.sdui.flagshipnav.home.Home#0","a15eca777c146d37da0475b8f19e5d56"]`)
 

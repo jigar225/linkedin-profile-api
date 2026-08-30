@@ -5,42 +5,67 @@ profiles (`/in/`), companies (`/company/`) and schools (`/school/`).
 
 No browser involved. The server replays the same internal requests LinkedIn's
 own web app makes (Voyager GraphQL + React Flight streams), authenticated with
-your own session cookies. Pure Go — one small dependency (godotenv), everything
+your own session cookies. The TLS/HTTP2 layer impersonates real Chrome
+(bogdanfinn/tls-client — LinkedIn fingerprints the handshake before it reads
+a single header, and Go's stock ClientHello is a world-famous bot tell);
+above that, two small dependencies (tls-client, godotenv), everything
 else is the standard library. How those requests were identified:
 [docs/recon.md](docs/recon.md).
 
 ## Run
 
-Requires Go 1.22+ and two cookies from your own LinkedIn session.
+Requires Go 1.24+ and a browser-born LinkedIn session.
 
-Getting the cookies: log into linkedin.com, open DevTools (F12) ->
-Application -> Storage -> Cookies -> `https://www.linkedin.com`, and copy the
-values of `li_at` and `JSESSIONID`. Note that `li_at` is HttpOnly, so
-`document.cookie` can't see it — you need the Application tab. Quotes around
-the JSESSIONID value are optional.
-
-```bash
-export LI_AT='your-li_at-value'
-export JSESSIONID='ajax:your-jsessionid-value'
-go run ./cmd          # listens on :8080, override with PORT
-```
-
-Or with a `.env` file (see `.env.example`):
+**Primary auth — the full cookie jar (strongly preferred).** LinkedIn kills
+sessions replayed from a context that doesn't match the birth device dossier
+(docs/recon.md), so the session must be BORN in a real browser and used with
+its WHOLE jar (`bcookie` is LinkedIn's device ID — the dossier expects it).
+The cold-path script does the birth:
 
 ```bash
-cp .env.example .env   # fill in your values
-go run ./cmd           # .env is loaded automatically
+# needs Playwright (pip install playwright && playwright install chromium)
+python3 scripts/linkedin_login.py   # real browser opens → log in manually
+go run ./cmd                        # picks up ../linkedin_session.json
 ```
 
-Alternative auth: point `LINKEDIN_SESSION_FILE` at a Playwright
-`storage_state` JSON. Used only when `LI_AT`/`JSESSIONID` are not set.
+It writes a Playwright `storage_state` JSON to `../linkedin_session.json`
+(override path: `LINKEDIN_SESSION_FILE`). Re-run it only when the API
+starts returning 401 (session dead) — days of life per birth is normal.
 
-Request pacing: by default the server shapes its upstream calls like the real
-LinkedIn web app (sections fetched in waves with pauses, the contact overlay
-trailing last like a clicked overlay, not all at once) — a profile fetch
-takes ~13-18s on a cache miss. `LINKEDIN_PACING=fast`
-disables the pauses for local development; don't use it against a real
-account you care about.
+**Fallback auth — stripped jar.** Two cookies in env (`.env` supported, see
+`.env.example`): `LI_AT` + `JSESSIONID` from DevTools -> Application ->
+Cookies. Works, but lacks the device cookies — use the session file
+whenever possible.
+
+## Deploy (cloud)
+
+The browser exists ONLY at birth time, on your local machine — the server
+never runs Python or Chrome. The Dockerfile (pure Go, static binary) is all
+the cloud needs:
+
+```bash
+# locally: birth the session (real Chrome, manual login)
+python3 scripts/linkedin_login.py        # writes ../linkedin_session.json
+
+# cloud: ship the jar as an env var + a residential proxy
+LINKEDIN_SESSION_JSON='<contents of ../linkedin_session.json>'
+LINKEDIN_PROXY='http://user:pass@your-residential-proxy:8080'
+docker build -t linkedin-profile-api . && docker run -p 8080:8080 \
+  -e LINKEDIN_SESSION_JSON -e LINKEDIN_PROXY linkedin-profile-api
+```
+
+Two deploy rules, both evidence-backed (docs/recon.md): (1) the jar must be
+the FULL browser-born jar, re-birthed locally when the API starts 401ing —
+no Python/Chrome on the server, ever; (2) `LINKEDIN_PROXY` is effectively
+REQUIRED on cloud — a session born on a home IP but used from a datacenter
+egress is the #1 session-kill pattern ("impossible travel"). Match the
+proxy's geography to the birth machine's.
+
+Request pacing: a profile fetch is 3 jittered calls (topcard → dash →
+contact overlay) with fresh per-page-load tracking IDs — a few seconds on a
+cache miss. Fewer requests = lower velocity score; every call is one the
+real web app actually makes. `LINKEDIN_PACING=fast` disables the pauses for
+local development; don't use it against a real account you care about.
 
 ## API
 
@@ -106,16 +131,7 @@ every field):
     {"name": "English", "proficiency": "Professional working proficiency"},
     {"name": "Gujarati", "proficiency": "Native or bilingual proficiency"}
   ],
-  "recommendations": [
-    {
-      "recommender": "Sunny Vaghadia",
-      "headline": "Expert Engineer at Apexon | JavaScript | React JS | TypeScript | ...",
-      "relationship": "Maitrey worked with Sunny but on different teams",
-      "date": "June 17, 2025",
-      "text": "I had the pleasure of working with him for a couple of years at Vivacious Websolution...",
-      "direction": "received"
-    }
-  ],
+  "recommendations": [],
   "contact_info": {
     "websites": ["thetatechnolabs.com"]
   },
@@ -130,10 +146,9 @@ Field notes:
 
 - `about`: omitted when the profile has no About section (this one doesn't).
 - `languages`: `proficiency` is omitted when the profile doesn't state one.
-- `recommendations[].direction`: `"received"` or `"given"`, read from the
-  section's Received/Given toggle state in the stream. Omitted when the
-  stream carries no toggle state — we don't guess. The `relationship` line
-  always names both parties either way ("Maitrey managed Saumya directly").
+- `recommendations`: currently always empty — both sources were
+  session-kill suspects and are retired (recoverable via git history).
+  The field stays in the schema so consumers don't break.
 - `contact_info`: omitted entirely when the member shares nothing with your
   account. Email/phone are usually only visible for 1st-degree connections;
   websites/socials sometimes show for anyone.
@@ -166,8 +181,10 @@ Errors, always `{"error": "..."}`:
 400  missing "url" query parameter
 400  unsupported LinkedIn URL type (response includes the supported list:
      /in/, /company/, /school/)
+401  linkedin session expired — refresh LI_AT/JSESSIONID cookies
+404  profile not found (or not visible to this account)
 429  too many upstream fetches in flight (Retry-After header set)
-502  upstream LinkedIn failure (session expired, rate limited, not found)
+502  upstream LinkedIn failure — retry shortly
 ```
 
 Responses carry `X-Cache: hit` when served from cache, `X-Cache: stale` when

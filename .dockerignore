@@ -2,3 +2,6 @@
 .env
 debug-dumps/
 *_output.json
+scripts/.browser-profile/
+network_log*.jsonl
+docs/

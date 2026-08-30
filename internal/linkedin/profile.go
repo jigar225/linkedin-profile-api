@@ -33,9 +33,10 @@ type Language struct {
 	Proficiency string `json:"proficiency,omitempty"`
 }
 
-// Recommendation is one recommendation entry. Relationship comes from the
-// voyager enum (generic phrasing — see recoRelationshipText). Direction is
-// "received" (the endpoint we fetch); "given" would need a second call.
+// Recommendation is one recommendation entry. CURRENTLY UNPOPULATED: the
+// voyager recos endpoint is a session-kill suspect and the RSC stream
+// source was deleted with the cover machinery (both recoverable via git).
+// The field stays in the schema (always []) so consumers don't break.
 type Recommendation struct {
 	Recommender  string `json:"recommender,omitempty"`
 	Headline     string `json:"headline,omitempty"`
