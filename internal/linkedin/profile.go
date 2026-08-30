@@ -1,5 +1,50 @@
 package linkedin
 
+// ---------- Section schema (filled from voyager dash entities + the
+// recommendations endpoint — never from render trees) ----------
+
+type Experience struct {
+	Title          string `json:"title"`
+	Company        string `json:"company"`
+	EmploymentType string `json:"employment_type,omitempty"`
+	DateRange      string `json:"date_range,omitempty"`
+	From           string `json:"from,omitempty"`
+	To             string `json:"to,omitempty"`
+	Location       string `json:"location,omitempty"`
+}
+
+type Education struct {
+	School    string `json:"school"`
+	Degree    string `json:"degree,omitempty"`
+	DateRange string `json:"date_range,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+}
+
+type Certification struct {
+	Title      string `json:"title"`
+	Issuer     string `json:"issuer,omitempty"`
+	IssuedDate string `json:"issued_date,omitempty"`
+}
+
+// Language pairs a language name with its proficiency.
+type Language struct {
+	Name        string `json:"name"`
+	Proficiency string `json:"proficiency,omitempty"`
+}
+
+// Recommendation is one recommendation entry. Relationship comes from the
+// voyager enum (generic phrasing — see recoRelationshipText). Direction is
+// "received" (the endpoint we fetch); "given" would need a second call.
+type Recommendation struct {
+	Recommender  string `json:"recommender,omitempty"`
+	Headline     string `json:"headline,omitempty"`
+	Relationship string `json:"relationship,omitempty"`
+	Date         string `json:"date,omitempty"`
+	Text         string `json:"text"`
+	Direction    string `json:"direction,omitempty"`
+}
+
 // Profile is our public API response schema (the challenge's 10 fields,
 // plus enrichment: recommendations, contact info, language proficiencies,
 // and the Voyager topcard identity block — URNs, badges/flags, locale,

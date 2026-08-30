@@ -74,6 +74,18 @@ func (c *Client) GetContactInfo(vanity, givenName, familyName string) (string, e
 
 var reEmail = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
+// noiseLeaves are UI strings, not data (overlay + flight text junk).
+var noiseLeaves = map[string]bool{
+	"Collapsed": true, "Expanded": true, "Following": true, "Follow": true,
+	"Join": true, "Joined": true, "Requested": true, "Unsubscribed": true,
+	"Subscribed": true, "Received": true, "Given": true, "Link": true,
+	"Show more": true, "See more": true, "Show all": true,
+	"Featured":                        true,
+	"LinkedIn helped me get this job": true, "Connected apps": true,
+}
+
+func isNoise(s string) bool { return noiseLeaves[s] }
+
 // contactChrome is overlay UI scaffolding, not data. ("Follow"/"Following"
 // already live in the global noiseLeaves.)
 var contactChrome = map[string]bool{

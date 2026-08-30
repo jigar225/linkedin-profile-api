@@ -2,8 +2,11 @@ package linkedin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -11,6 +14,10 @@ import (
 // TopcardQueryID is LinkedIn's persisted-query id for profile-by-vanity-name.
 // Captured from real traffic (network_log.jsonl). If it ever 400s, re-capture.
 const TopcardQueryID = "voyagerIdentityDashProfiles.34ead06db82a2cc9a778fac97f69ad6a"
+
+// ErrProfileNotFound — the vanity doesn't exist (or isn't visible to our
+// account). Mapped to a clean 404 by the API layer.
+var ErrProfileNotFound = errors.New("linkedin profile not found (or not visible to this account)")
 
 // Topcard is the verified "top of profile" data from Voyager GraphQL.
 type Topcard struct {
@@ -207,12 +214,12 @@ func (c *Client) GetTopcard(vanity string) (*Topcard, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == 404 {
+		return nil, ErrProfileNotFound
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("voyager status %d: %.300s", resp.StatusCode, body)
 	}
-
-	// DEBUG: show the raw Voyager envelope exactly as LinkedIn sent it.
-	// log.Printf("linkedin: voyager topcard RAW response body for %s (%d bytes):\n%s", vanity, len(body), body)
 
 	return parseTopcard(vanity, body)
 }
@@ -225,13 +232,6 @@ func parseTopcard(vanity string, body []byte) (*Topcard, error) {
 	if err := json.Unmarshal(body, &vr); err != nil {
 		return nil, fmt.Errorf("voyager JSON: %w", err)
 	}
-
-	// // DEBUG: show how the envelope looks after unmarshal — note the struct
-	// // only keeps `included`, so data/meta from the envelope are dropped here.
-	// log.Printf("linkedin: voyager topcard UNMARSHALLED vr for %s: %d included entities", vanity, len(vr.Included))
-	// for i, raw := range vr.Included {
-	// 	log.Printf("linkedin: vr.Included[%d]: %s", i, raw)
-	// }
 
 	// Index entities by URN for reference resolution. rawByURN keeps the
 	// unparsed bytes so the relationship entity can be re-parsed into its
@@ -265,7 +265,7 @@ func parseTopcard(vanity string, body []byte) (*Topcard, error) {
 		prof = &profiles[0]
 	}
 	if prof == nil {
-		return nil, fmt.Errorf("no profile entity found for %q", vanity)
+		return nil, ErrProfileNotFound
 	}
 
 	tc := &Topcard{
@@ -334,6 +334,49 @@ func parseTopcard(vanity string, body []byte) (*Topcard, error) {
 		}
 	}
 	return tc, nil
+}
+
+// GetDashProfile fetches the voyager dash REST endpoint with the WEB
+// frontend's OWN decoration (FullProfileWithEntities-93 — captured from real
+// web traffic; an earlier Android decoration variant got sessions killed).
+// One GET returns the FULL profile (experience/education/skills/certs/
+// languages/honors/…) as typed entities with structured dates: no render
+// tree, no leaf rules. This is the section source of truth.
+func (c *Client) GetDashProfile(vanity string) ([]byte, error) {
+	url := "https://www.linkedin.com/voyager/api/identity/dash/profiles" +
+		"?q=memberIdentity" +
+		"&memberIdentity=" + vanity +
+		"&decorationId=com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93"
+
+	req, err := c.newRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Same accept + restli headers the real web frontend sends for dash calls.
+	req.Header.Set("x-restli-protocol-version", "2.0.0")
+	req.Header.Set("accept", "application/vnd.linkedin.normalized+json+2.1")
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("dash profile request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("dash status %d: %.300s", resp.StatusCode, body)
+	}
+	// Debug dump, same opt-in as before.
+	if dir := os.Getenv("LINKEDIN_DEBUG_DIR"); dir != "" {
+		base := filepath.Join(dir, vanity)
+		if err := os.MkdirAll(base, 0755); err == nil {
+			os.WriteFile(filepath.Join(base, "dashProfile.json"), body, 0644)
+		}
+	}
+	return body, nil
 }
 
 // extractVectorImageURLs walks arbitrary JSON, finds every VectorImage-ish

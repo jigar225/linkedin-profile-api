@@ -5,8 +5,10 @@ package linkedin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -14,6 +16,11 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrSessionExpired signals LinkedIn killed our session server-side
+// (dead li_at). Detection: the 302-to-self loop (with li_at deletion) or a
+// bounce to the login/authwall/checkpoint pages. Definitive — never retried.
+var ErrSessionExpired = errors.New("linkedin session expired — refresh LI_AT/JSESSIONID cookies")
 
 // userAgent mirrors a desktop Chrome browser. LinkedIn checks it loosely;
 // the captured real Voyager calls used a similar string.
@@ -91,6 +98,25 @@ func NewClientFromSessionFile(path string) (*Client, error) {
 func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: 30 * time.Second,
+		// Session-death detection: LinkedIn bounces dead sessions to the
+		// login/authwall/checkpoint pages, or 302s to the SAME URL in a loop
+		// (with li_at deletion). Fail fast with a TYPED error — retrying a
+		// dead session just hammers the risk engine.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > 0 && req.URL.String() == via[len(via)-1].URL.String() {
+				return ErrSessionExpired // 302-to-self loop
+			}
+			if strings.Contains(req.URL.Path, "/uas/") ||
+				strings.Contains(req.URL.Path, "/authwall") ||
+				strings.Contains(req.URL.Path, "/checkpoint/") {
+				return ErrSessionExpired
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			log.Printf("linkedin: redirect #%d → %s", len(via), req.URL)
+			return nil
+		},
 		Transport: &http.Transport{
 			MaxIdleConns:        20,
 			MaxIdleConnsPerHost: 10,
@@ -124,6 +150,9 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 		resp, err := c.http.Do(req)
 		if err == nil {
 			return resp, nil
+		}
+		if errors.Is(err, ErrSessionExpired) {
+			return nil, err // session death is definitive — never retried
 		}
 		lastErr = err
 	}

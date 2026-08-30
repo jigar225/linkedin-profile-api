@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"linkedin-profile-api/internal/linkedin"
@@ -97,8 +98,17 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		// Upstream failure: session rejected, rate limited, not found, network.
-		writeError(w, http.StatusBadGateway, "linkedin fetch failed: "+err.Error())
+		// Upstream failure: map to CLEAN client-facing errors — the real
+		// error (internal URLs, voyager details) is logged, never leaked.
+		log.Printf("linkedin fetch failed: %v", err)
+		switch {
+		case errors.Is(err, linkedin.ErrSessionExpired):
+			writeError(w, http.StatusUnauthorized, "linkedin session expired — refresh LI_AT/JSESSIONID cookies")
+		case errors.Is(err, linkedin.ErrProfileNotFound):
+			writeError(w, http.StatusNotFound, "profile not found (or not visible to this account)")
+		default:
+			writeError(w, http.StatusBadGateway, "linkedin upstream error — retry shortly")
+		}
 		return
 	}
 	if servedStale {
