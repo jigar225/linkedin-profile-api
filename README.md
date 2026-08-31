@@ -8,7 +8,6 @@ internal requests that LinkedIn's own website makes — 3 per profile — using
 the cookies from one real browser login. It also copies Chrome's TLS
 fingerprint, because LinkedIn checks the TLS handshake before it reads a
 single header, and Go's default handshake is a well-known bot giveaway.
-How I found these requests (with evidence): [docs/recon.md](docs/recon.md).
 
 31 fields per profile · 14 per company · 3 requests to LinkedIn per profile ·
 24h cache
